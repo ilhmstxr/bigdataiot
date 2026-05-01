@@ -2,10 +2,11 @@
   "name": "bigdata-native-server",
   "version": "2.0.0",
   "description": "BigData API Server - Native Node.js HTTPS (No Fastify)",
-  "main": "native-server.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node native-server.js",
-    "dev": "node native-server.js",
+    "start": "node server.js",
+    "dev": "node server.js",
+    "migrate": "mysql -u root -p big_data_sitasi < schema.sql",
     "ssl:generate": "openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ssl/key.pem -out ssl/cert.pem -subj '/CN=localhost'",
     "test": "echo 'Run manual tests using cURL commands from api-fix.md'"
   },

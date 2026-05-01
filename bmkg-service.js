@@ -4,7 +4,7 @@
  */
 
 const axios = require('axios');
-const { saveEarthquakeData } = require('./controllers/earthquakeLog-native');
+const { saveEarthquakeData } = require('./controllers/earthquakeLog');
 
 // RAM State: Menyimpan memori gempa terakhir (Deduplication)
 let lastQuakeId = null;
