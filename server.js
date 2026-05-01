@@ -1,5 +1,6 @@
 // Require the fastify framework and instantiate it
-const fastify = require('fastify')({ logger: true });
+const fastify = require('fastify')({ logger: true,  trustProxy: true,   // percaya X-Forwarded-* headers dari Nginx
+ });
 const path = require('path');
 
 // Require dotenv untuk environment variables
@@ -21,6 +22,7 @@ fastify.register(require('@fastify/env'), {
     properties: {
       PORT: { type: 'string', default: '3000' },
       DB_HOST: { type: 'string' },
+      DB_PORT: { type: 'string', default: '3306' },
       DB_USER: { type: 'string' },
       DB_PASSWORD: { type: 'string' },
       DB_NAME: { type: 'string' },

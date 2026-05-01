@@ -2,33 +2,53 @@
 
 Konfigurasi reverse proxy untuk **BigData IoT Monitoring System**.
 
-- **Frontend** (React/Vite build): static files dari `/var/www/bigdata-dashboard`
-- **Backend** (Fastify): proxy ke `127.0.0.1:3000`
-- **Path file**: `/etc/nginx/sites-available/bigdata.conf`
+> **Arsitektur baru**: Fastify sudah serve **frontend (vanilla JS) + API** sekaligus di port `3000` lewat `@fastify/static`. Nginx hanya bertugas sebagai **reverse proxy + SSL termination**, **tidak perlu lagi** serve static files terpisah.
+
+- **Backend + Frontend** (Fastify): `127.0.0.1:3000` (semua di satu proses)
+- **Path file Nginx**: `/etc/nginx/sites-available/bigdata.conf`
 
 ---
 
 ## Prasyarat di Server
 
 ```bash
-# Install nginx
+# 1. Install nginx
 sudo apt update && sudo apt install -y nginx
 
-# Pastikan node + pm2 (untuk backend) atau systemd service sudah jalan
-node --version    # >= 18
-pm2 --version     # opsional, untuk daemonize Fastify
+# 2. Install Node.js (>=18) dan pm2 untuk daemonize Fastify
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo npm install -g pm2
 
-# Build frontend & deploy ke /var/www
-cd /path/ke/dashboard-ui
-npm ci && npm run build
-sudo mkdir -p /var/www/bigdata-dashboard
-sudo cp -r dist/* /var/www/bigdata-dashboard/
-sudo chown -R www-data:www-data /var/www/bigdata-dashboard
+# 3. Deploy source code (clone / rsync project ke server)
+sudo mkdir -p /var/www/bigdata
+sudo chown -R $USER:$USER /var/www/bigdata
+git clone <repo> /var/www/bigdata
+cd /var/www/bigdata/server4
+
+# 4. Install dependency & setup .env
+npm ci --production
+cp .env.example .env
+nano .env   # isi DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, dll
+
+# 5. Setup database
+mysql -u root -p < schema.sql
+
+# 6. Jalankan Fastify dengan pm2
+pm2 start server.js --name bigdata-api
+pm2 save
+pm2 startup   # ikuti instruksi yang muncul agar auto-start saat reboot
+
+# Cek status
+pm2 status
+curl http://127.0.0.1:3000/api/health   # harus return {"status":"OK",...}
 ```
+
+> Tidak perlu `npm run build` atau copy ke `/var/www/bigdata-dashboard` — UI vanilla JS sudah ada di `server4/public/` dan otomatis di-serve oleh Fastify.
 
 ---
 
-## Struktur File
+## Struktur File Nginx
 
 ```
 /etc/nginx/
@@ -41,87 +61,114 @@ sudo chown -R www-data:www-data /var/www/bigdata-dashboard
 
 ---
 
-## Isi File `bigdata.conf`
+## Isi File `bigdata.conf` — HTTP only (sebelum SSL)
 
 ```nginx
 # =========================================================================
 #  BigData IoT Monitoring System — Nginx reverse proxy
-#  Frontend: React (static)   ┐
-#  Backend:  Fastify :3000    ┘  digabung di satu domain
+#  Fastify (UI + API) di 127.0.0.1:3000 → di-proxy semua via Nginx
 # =========================================================================
 
-# Rate limiting zones (definisikan di nginx.conf http{} block, atau di sini)
+# Rate limit zones (definisikan SEKALI di /etc/nginx/nginx.conf http{} block,
+# atau di sini jika hanya satu site)
 # limit_req_zone $binary_remote_addr zone=iot_ingest:10m rate=30r/s;
 # limit_req_zone $binary_remote_addr zone=api_general:10m rate=100r/s;
 
-upstream bigdata_api {
+upstream bigdata_app {
     server 127.0.0.1:3000;
     keepalive 32;
 }
 
-# ─── HTTP server (port 80) ────────────────────────────────────────────────
 server {
     listen 80;
     listen [::]:80;
-    server_name bigdata.example.com;   # GANTI dengan domain Anda
-
-    # Setelah SSL terpasang, aktifkan baris berikut untuk auto-redirect:
-    # return 301 https://$host$request_uri;
-
-    # === Frontend React build ===
-    root /var/www/bigdata-dashboard;
-    index index.html;
+    server_name bigdata.example.com;          # GANTI domain Anda
 
     # Logs
     access_log /var/log/nginx/bigdata.access.log;
     error_log  /var/log/nginx/bigdata.error.log warn;
 
-    # Security headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header X-XSS-Protection "1; mode=block" always;
+    # Body size — IoT POST kecil tapi siapkan margin
+    client_max_body_size 2m;
 
-    # Gzip compression
+    # Gzip compression (untuk JSON & static yang dilewatkan dari Fastify)
     gzip on;
     gzip_vary on;
     gzip_min_length 1024;
+    gzip_proxied any;
     gzip_types
         text/plain
         text/css
-        application/json
-        application/javascript
-        text/xml
-        application/xml
         text/javascript
+        application/javascript
+        application/json
+        application/xml
         image/svg+xml;
 
-    # Body size (untuk POST sensor ingest)
-    client_max_body_size 2m;
+    # Security headers global
+    add_header X-Frame-Options          "SAMEORIGIN" always;
+    add_header X-Content-Type-Options   "nosniff" always;
+    add_header Referrer-Policy          "strict-origin-when-cross-origin" always;
+    add_header X-XSS-Protection         "1; mode=block" always;
 
-    # === SPA routing (React Router fallback) ===
-    location / {
-        try_files $uri $uri/ /index.html;
+    # === Cache static assets dari Fastify (CSS/JS/gambar) ===
+    # Nginx simpan di RAM/disk supaya hit kedua tidak perlu hit Fastify
+    location ~* ^/(css|js|img|fonts)/.*\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        proxy_pass         http://bigdata_app;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_cache_valid  200 1d;
+        expires            7d;
+        add_header         Cache-Control "public, max-age=604800";
+        access_log         off;
     }
 
-    # === Static asset caching (aggressive) ===
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-        try_files $uri =404;
-    }
-
-    # === Backend API — proxy ke Fastify ===
-    location /api/ {
-        # limit_req zone=api_general burst=50 nodelay;
-
-        proxy_pass         http://bigdata_api;
+    # === Endpoint khusus: IoT sensor ingest (rate limit ketat anti-spam) ===
+    location = /api/sensor/ingest {
+        # limit_req zone=iot_ingest burst=20 nodelay;
+        proxy_pass         http://bigdata_app;
         proxy_http_version 1.1;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;
+        client_max_body_size 1m;
+    }
+
+    # === Endpoint khusus: n8n webhook (timeout panjang karena Gemini AI) ===
+    location = /api/n8n/webhook {
+        proxy_pass         http://bigdata_app;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+
+        # Whitelist IP n8n (uncomment & sesuaikan):
+        # allow 192.168.1.100;
+        # allow 10.0.0.0/24;
+        # deny  all;
+    }
+
+    # === Health check (no logging, ringan) ===
+    location = /api/health             { proxy_pass http://bigdata_app; access_log off; }
+    location = /api/dashboard/health   { proxy_pass http://bigdata_app; access_log off; }
+    location = /api/n8n/health         { proxy_pass http://bigdata_app; access_log off; }
+    location = /api/bmkg/health        { proxy_pass http://bigdata_app; access_log off; }
+
+    # === Default: semua request lain (UI + API) → Fastify ===
+    location / {
+        # limit_req zone=api_general burst=50 nodelay;
+
+        proxy_pass         http://bigdata_app;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Host  $host;
         proxy_set_header   Connection        "";
 
         # Timeouts
@@ -135,63 +182,12 @@ server {
         proxy_buffers     8 16k;
     }
 
-    # === Endpoint khusus: IoT sensor ingest (rate limit ketat) ===
-    location = /api/sensor/ingest {
-        # limit_req zone=iot_ingest burst=20 nodelay;
-
-        proxy_pass         http://bigdata_api;
-        proxy_http_version 1.1;
-        proxy_set_header   Host            $host;
-        proxy_set_header   X-Real-IP       $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        client_max_body_size 1m;
-    }
-
-    # === Endpoint khusus: n8n webhook (timeout lebih panjang) ===
-    location = /api/n8n/webhook {
-        proxy_pass         http://bigdata_api;
-        proxy_http_version 1.1;
-        proxy_set_header   Host            $host;
-        proxy_set_header   X-Real-IP       $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_read_timeout 120s;
-
-        # Whitelist IP n8n (uncomment & sesuaikan):
-        # allow 192.168.1.100;
-        # allow 10.0.0.0/24;
-        # deny  all;
-    }
-
-    # === Health check — no logging ===
-    location = /api/dashboard/health {
-        proxy_pass http://bigdata_api;
-        access_log off;
-    }
-
     # === Block file sensitif ===
     location ~ /\.(env|git|ht|htaccess|htpasswd) {
         deny all;
         return 404;
     }
 }
-
-# ─── HTTPS server (port 443) — aktifkan setelah jalankan certbot ──────────
-# server {
-#     listen 443 ssl http2;
-#     listen [::]:443 ssl http2;
-#     server_name bigdata.example.com;
-#
-#     ssl_certificate     /etc/letsencrypt/live/bigdata.example.com/fullchain.pem;
-#     ssl_certificate_key /etc/letsencrypt/live/bigdata.example.com/privkey.pem;
-#     ssl_protocols       TLSv1.2 TLSv1.3;
-#     ssl_ciphers         HIGH:!aNULL:!MD5;
-#     ssl_prefer_server_ciphers on;
-#
-#     # HSTS
-#     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
-#
-#     # ... salin semua location {} block dari server :80 di atas ...
-# }
 ```
 
 ---
@@ -199,17 +195,25 @@ server {
 ## Cara Pasang
 
 ```bash
-# 1. Tulis file ini ke sites-available
+# 1. Tulis file config ini ke sites-available
 sudo nano /etc/nginx/sites-available/bigdata.conf
 
 # 2. Aktifkan dengan symlink ke sites-enabled (lihat sites-enabled.md)
 sudo ln -s /etc/nginx/sites-available/bigdata.conf /etc/nginx/sites-enabled/bigdata.conf
 
-# 3. Test syntax config
+# 3. Hapus default config jika ada konflik di port 80
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# 4. Test syntax
 sudo nginx -t
 
-# 4. Reload nginx (tanpa downtime)
+# 5. Reload nginx (tanpa downtime)
 sudo systemctl reload nginx
+
+# 6. Verifikasi
+curl http://bigdata.example.com/                  # → harusnya HTML dashboard
+curl http://bigdata.example.com/api/health        # → {"status":"OK",...}
+curl http://bigdata.example.com/api/dashboard/stats
 ```
 
 ---
@@ -221,12 +225,9 @@ Force HTTPS = setiap request `http://` otomatis dialihkan ke `https://`, dan bro
 ### Langkah 1 — Install Certbot & dapatkan SSL Certificate
 
 ```bash
-# Install certbot dengan plugin nginx
-sudo apt update
 sudo apt install -y certbot python3-certbot-nginx
 
-# Pastikan domain sudah pointing ke IP server (cek dengan: dig bigdata.example.com)
-# Lalu jalankan certbot
+# Pastikan domain sudah pointing ke IP server (cek: dig bigdata.example.com)
 sudo certbot --nginx -d bigdata.example.com -d www.bigdata.example.com
 
 # Saat ditanya:
@@ -237,26 +238,35 @@ sudo certbot --nginx -d bigdata.example.com -d www.bigdata.example.com
 
 Certbot akan:
 - Buat sertifikat di `/etc/letsencrypt/live/bigdata.example.com/`
-- Update `bigdata.conf` otomatis dengan blok `server { listen 443 ssl ... }`
-- Tambah `301 redirect` di blok `server { listen 80 ... }`
-- Setup auto-renewal lewat systemd timer (cek: `sudo systemctl list-timers | grep certbot`)
+- Update `bigdata.conf` otomatis (tambah blok `server { listen 443 ssl }`)
+- Tambah `301 redirect` di blok `server { listen 80 }`
+- Setup auto-renewal lewat systemd timer
 
-### Langkah 2 — Verifikasi config setelah certbot
+### Langkah 2 — Verifikasi Config Setelah Certbot
 
 Buka ulang `/etc/nginx/sites-available/bigdata.conf`, harusnya jadi seperti ini:
 
 ```nginx
-# === HTTP server — REDIRECT SEMUA ke HTTPS ===
+# =========================================================================
+#  BigData IoT Monitoring System — HTTPS-enabled
+# =========================================================================
+
+upstream bigdata_app {
+    server 127.0.0.1:3000;
+    keepalive 32;
+}
+
+# === HTTP server — REDIRECT 301 ke HTTPS ===
 server {
     listen 80;
     listen [::]:80;
     server_name bigdata.example.com www.bigdata.example.com;
 
-    # Force redirect 301 ke HTTPS
+    # Force redirect ke HTTPS
     return 301 https://$host$request_uri;
 }
 
-# === HTTPS server — yang benar-benar melayani traffic ===
+# === HTTPS server — yang melayani traffic ===
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -268,59 +278,52 @@ server {
     include             /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
 
-    # === HSTS — paksa browser SELALU pakai HTTPS untuk domain ini ===
-    # max-age=63072000 = 2 tahun, includeSubDomains = berlaku ke subdomain juga
+    # === HSTS — paksa browser SELALU pakai HTTPS ===
+    # max-age=63072000 = 2 tahun, includeSubDomains, preload-ready
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
 
-    # Security headers tambahan
+    # Security headers
     add_header X-Frame-Options          "SAMEORIGIN" always;
     add_header X-Content-Type-Options   "nosniff" always;
     add_header Referrer-Policy          "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy       "geolocation=(), microphone=(), camera=()" always;
 
-    # === Frontend React build (sama seperti config :80 sebelumnya) ===
-    root /var/www/bigdata-dashboard;
-    index index.html;
-
+    # Logs
     access_log /var/log/nginx/bigdata.access.log;
     error_log  /var/log/nginx/bigdata.error.log warn;
 
+    # Body size & compression
+    client_max_body_size 2m;
     gzip on;
     gzip_vary on;
     gzip_min_length 1024;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript image/svg+xml;
+    gzip_proxied any;
+    gzip_types text/plain text/css text/javascript application/javascript application/json application/xml image/svg+xml;
 
-    client_max_body_size 2m;
-
-    location / {
-        try_files $uri $uri/ /index.html;
+    # === Cache static assets dari Fastify ===
+    location ~* ^/(css|js|img|fonts)/.*\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        proxy_pass         http://bigdata_app;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        expires            7d;
+        add_header         Cache-Control "public, max-age=604800";
+        access_log         off;
     }
 
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-        try_files $uri =404;
-    }
-
-    # === Backend API proxy ===
-    location /api/ {
-        proxy_pass         http://bigdata_api;
+    # === Endpoint khusus dengan setting per-route ===
+    location = /api/sensor/ingest {
+        proxy_pass         http://bigdata_app;
         proxy_http_version 1.1;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;       # ← KRITIS: kasih tahu Fastify ini HTTPS
-        proxy_set_header   X-Forwarded-Host  $host;
-        proxy_set_header   Connection        "";
-
-        proxy_connect_timeout 30s;
-        proxy_send_timeout    60s;
-        proxy_read_timeout    60s;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        client_max_body_size 1m;
     }
 
     location = /api/n8n/webhook {
-        proxy_pass         http://bigdata_api;
+        proxy_pass         http://bigdata_app;
         proxy_http_version 1.1;
         proxy_set_header   Host              $host;
         proxy_set_header   X-Real-IP         $remote_addr;
@@ -329,9 +332,26 @@ server {
         proxy_read_timeout 120s;
     }
 
-    location = /api/dashboard/health {
-        proxy_pass http://bigdata_api;
-        access_log off;
+    # === Health checks (no logging) ===
+    location = /api/health           { proxy_pass http://bigdata_app; access_log off; }
+    location = /api/dashboard/health { proxy_pass http://bigdata_app; access_log off; }
+    location = /api/n8n/health       { proxy_pass http://bigdata_app; access_log off; }
+    location = /api/bmkg/health      { proxy_pass http://bigdata_app; access_log off; }
+
+    # === Default: semua (UI + API) → Fastify ===
+    location / {
+        proxy_pass         http://bigdata_app;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;        # ← KRITIS untuk trustProxy
+        proxy_set_header   X-Forwarded-Host  $host;
+        proxy_set_header   Connection        "";
+
+        proxy_connect_timeout 30s;
+        proxy_send_timeout    60s;
+        proxy_read_timeout    60s;
     }
 
     location ~ /\.(env|git|ht) {
@@ -341,9 +361,9 @@ server {
 }
 ```
 
-### Langkah 3 — Update Fastify supaya percaya header dari Nginx
+### Langkah 3 — Update Fastify supaya Percaya Header Nginx
 
-Karena Fastify dengar di `127.0.0.1:3000` (HTTP biasa), tapi sebenarnya di-proxy lewat Nginx HTTPS, kamu perlu kasih tahu Fastify untuk **trust proxy headers**. Edit `server.js`:
+Edit `server.js` agar Fastify membaca `X-Forwarded-Proto`/`X-Forwarded-For` dari Nginx:
 
 ```js
 // SEBELUM
@@ -352,13 +372,13 @@ const fastify = require('fastify')({ logger: true });
 // SESUDAH
 const fastify = require('fastify')({
   logger: true,
-  trustProxy: true,   // ← percaya X-Forwarded-* headers dari Nginx
+  trustProxy: true,   // percaya X-Forwarded-* headers dari Nginx
 });
 ```
 
 Efek `trustProxy: true`:
-- `request.protocol` jadi `'https'` (bukan `'http'`) → cocok untuk redirect/cookie logic
-- `request.ip` jadi IP user asli (bukan `127.0.0.1` Nginx)
+- `request.protocol` = `'https'` (bukan `'http'`)
+- `request.ip` = IP user asli (bukan `127.0.0.1` Nginx)
 - `request.hostname` ambil dari `X-Forwarded-Host`
 
 ### Langkah 4 — Test & Reload
@@ -370,60 +390,65 @@ sudo nginx -t
 # Reload nginx
 sudo systemctl reload nginx
 
-# Restart Fastify (dengan pm2 / systemd)
-pm2 restart bigdata-server         # jika pakai pm2
-# atau
-sudo systemctl restart bigdata     # jika pakai systemd
+# Restart Fastify (pm2)
+pm2 restart bigdata-api
 
-# Verifikasi redirect
+# Verifikasi redirect HTTP → HTTPS
 curl -I http://bigdata.example.com
-# Harusnya output:
-# HTTP/1.1 301 Moved Permanently
-# Location: https://bigdata.example.com/
+# Output yang diharapkan:
+#   HTTP/1.1 301 Moved Permanently
+#   Location: https://bigdata.example.com/
 
-# Verifikasi HSTS header aktif
+# Verifikasi HSTS aktif
 curl -I https://bigdata.example.com | grep -i strict
-# Harusnya: strict-transport-security: max-age=63072000; includeSubDomains; preload
+# Output: strict-transport-security: max-age=63072000; includeSubDomains; preload
+
+# Verifikasi UI ter-serve
+curl https://bigdata.example.com/ | grep "BigData"
+
+# Verifikasi API jalan
+curl https://bigdata.example.com/api/health
 ```
 
-### Langkah 5 — Auto-renewal SSL (sudah di-setup certbot, ini cuma verifikasi)
+### Langkah 5 — Auto-renewal SSL (otomatis di-setup certbot)
 
 ```bash
-# Test renewal (dry run, tidak benar-benar memperbarui)
+# Test renewal (dry run)
 sudo certbot renew --dry-run
 
 # Cek timer-nya jalan
 sudo systemctl status certbot.timer
 ```
 
-Sertifikat Let's Encrypt valid 90 hari, certbot akan auto-renew di hari ke-60.
+Sertifikat Let's Encrypt valid 90 hari, certbot auto-renew di hari ke-60.
 
 ---
 
 ## Checklist Force HTTPS
 
-- [ ] Certbot terpasang & sertifikat berhasil di-issue
+- [ ] Certbot terpasang & sertifikat ter-issue
 - [ ] Blok `server { listen 80 ... return 301 https://... }` ada di `bigdata.conf`
 - [ ] Blok `server { listen 443 ssl ... }` punya cert + HSTS header
-- [ ] `proxy_set_header X-Forwarded-Proto $scheme;` ada di setiap `location /api/`
+- [ ] `proxy_set_header X-Forwarded-Proto $scheme;` ada di setiap `location`
 - [ ] `server.js` pakai `trustProxy: true`
+- [ ] `pm2 restart bigdata-api` sudah dijalankan
 - [ ] `curl -I http://...` return `301` ke `https://`
 - [ ] Browser tampilkan **gembok hijau** + tidak ada warning "mixed content"
 - [ ] Test di [SSL Labs](https://www.ssllabs.com/ssltest/) → minimal grade **A**
 
 ---
 
-## Bonus — HSTS Preload (Paling Strict)
+## Bonus — HSTS Preload
 
-Setelah HTTPS jalan stabil minimal 1 minggu, kamu bisa daftar ke [hstspreload.org](https://hstspreload.org/) supaya domain kamu **hardcoded di Chrome/Firefox/Safari** sebagai HTTPS-only. Setelah masuk preload list, browser **TIDAK AKAN PERNAH** request via HTTP — bahkan request pertama pun langsung HTTPS.
+Setelah HTTPS jalan stabil minimal 1 minggu, daftarkan domain ke [hstspreload.org](https://hstspreload.org/) supaya **hardcoded di Chrome/Firefox/Safari** sebagai HTTPS-only. Browser tidak akan pernah request via HTTP — bahkan request pertama.
 
 Syarat preload (sudah di-handle config di atas):
 - `max-age` minimal `31536000` (1 tahun) — kita pakai 2 tahun ✓
-- `includeSubDomains` — ada ✓
-- `preload` keyword — ada ✓
-- Redirect HTTP → HTTPS aktif — ada ✓
+- `includeSubDomains` ✓
+- `preload` keyword ✓
+- Redirect HTTP → HTTPS aktif ✓
 
-⚠ **Hati-hati**: setelah masuk preload list, sulit dihapus (butuh berbulan-bulan). Hanya daftar kalau yakin domain akan **selamanya** pakai HTTPS.
+⚠ **Hati-hati**: setelah masuk preload list, sulit dihapus (butuh berbulan-bulan). Hanya daftar kalau yakin domain selamanya pakai HTTPS.
 
 ---
 
@@ -431,14 +456,32 @@ Syarat preload (sudah di-handle config di atas):
 
 | Endpoint | Catatan Nginx |
 |---|---|
-| `POST /api/sensor/ingest` | Body kecil (~1 KB), butuh **rate limit** untuk anti-spam dari ESP32 jahat |
+| `GET /` (dashboard UI) | Di-serve Fastify via `@fastify/static` dari `server4/public/` |
+| `GET /css/*`, `/js/*` | Static assets di-cache Nginx 7 hari |
+| `POST /api/sensor/ingest` | Body kecil (~1 KB), butuh **rate limit** untuk anti-spam ESP32 |
 | `POST /api/n8n/webhook` | Bisa lambat (Gemini AI), `proxy_read_timeout 120s` |
 | `GET /api/bmkg/*` | Dipanggil dari frontend, tidak perlu treatment khusus |
-| `GET /api/dashboard/realtime` | Dipoll setiap 60 detik dari React, aman dengan default |
+| `GET /api/dashboard/realtime` | Dipoll setiap 60 detik dari UI |
 | BMKG poller (internal) | Tidak lewat Nginx — Fastify panggil langsung ke `data.bmkg.go.id` |
 
 ---
 
 ## CORS Note
 
-`server.js` sudah pakai `@fastify/cors`, tapi karena frontend & backend **satu domain** lewat Nginx, CORS tidak diperlukan di production. Untuk dev (Vite di `:5173` hit Fastify di `:3000`), proxy sudah ditangani di `vite.config.js`.
+`server.js` masih register `@fastify/cors`, tapi karena UI **dan** API **satu origin** (sama-sama dari Fastify lewat Nginx), CORS **tidak dibutuhkan** di production. Kamu bisa hapus `@fastify/cors` registration jika mau lebih ringan. Untuk dev mode lokal pun tidak butuh karena UI dibuka dari `http://localhost:3000` yang sama dengan API.
+
+---
+
+## Perbedaan dari Versi Sebelumnya (React + dashboard-ui)
+
+| Aspek | Versi React | Versi Vanilla (sekarang) |
+|---|---|---|
+| `/var/www/bigdata-dashboard` | Wajib (host static) | **Tidak perlu** |
+| `npm run build` di server | Wajib | **Tidak perlu** |
+| `root` directive di Nginx | Wajib | **Tidak perlu** |
+| `try_files $uri /index.html` | Wajib (SPA fallback) | **Tidak perlu** (Fastify handle) |
+| Jumlah `proxy_pass` block | 3-4 (api + sebagian) | Semua proxy ke Fastify |
+| Nginx workload | Static + proxy | **Pure proxy** |
+| Deploy ulang frontend | Build + copy ke `/var/www` | Cukup `pm2 restart bigdata-api` |
+
+Konfigurasi Nginx jadi **30% lebih sedikit** dan deployment **jauh lebih simpel**.
