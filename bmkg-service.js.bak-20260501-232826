@@ -38,15 +38,14 @@ async function checkBMKG(fastifyLogger, n8nWebhookUrl) {
     }
 
     // Trigger n8n Webhook secara asinkron (jangan tunggu balasan n8n).
-    // n8n diharapkan POST balik ke `/webhook-test/n8n/earthquake`
-    // dengan body.source_id = insert_id setelah selesai memproses
-    // (lihat api-fix.md > Webhook Callback Routes).
+    // n8n diharapkan POST balik ke `/webhook-test/n8n/earthquake/${insert_id}`
+    // setelah selesai memproses (lihat api-fix.md > Webhook Callback Routes).
     if (n8nWebhookUrl) {
       axios.post(n8nWebhookUrl, {
         event_type: 'gempa_baru',
         quake_id: currentQuakeId,
         insert_id: earthquakeInsertId,
-        callback_url: '/webhook-test/n8n/earthquake',
+        callback_url_template: `/webhook-test/n8n/earthquake/${earthquakeInsertId}`,
         gempa_data: gempa
         // Catatan: Jika server bertugas hitung jarak Haversine, kalkulasi dan tambahkan 'jarak_km' ke sini
       }, { timeout: 10000 }).catch(err => {

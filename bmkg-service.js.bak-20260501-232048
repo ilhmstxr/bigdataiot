@@ -26,30 +26,21 @@ async function checkBMKG(fastifyLogger, n8nWebhookUrl) {
     lastQuakeId = currentQuakeId;
     if (fastifyLogger) fastifyLogger.info(`[SEISMIC] Gempa baru terdeteksi: ${currentQuakeId} Mag: ${gempa.Magnitude}`);
 
-    // Simpan raw data gempa ke database. Tangkap insertId untuk dipakai sebagai
-    // `:id` pada callback `/webhook-test/n8n/earthquake/:id` (n8n harus echo balik nilai ini).
-    let earthquakeInsertId = 0;
+    // Simpan raw data gempa ke database
     try {
-      const result = await saveEarthquakeData(gempa);
-      earthquakeInsertId = result?.insertId || 0;
-      if (fastifyLogger) fastifyLogger.info(`[SEISMIC] Raw data gempa disimpan ke DB: ${currentQuakeId} (insert_id=${earthquakeInsertId})`);
+      await saveEarthquakeData(gempa);
+      if (fastifyLogger) fastifyLogger.info(`[SEISMIC] Raw data gempa disimpan ke DB: ${currentQuakeId}`);
     } catch (dbErr) {
       if (fastifyLogger) fastifyLogger.error(`[SEISMIC] Gagal simpan ke DB: ${dbErr.message}`);
     }
 
-    // Trigger n8n Webhook secara asinkron (jangan tunggu balasan n8n).
-    // n8n diharapkan POST balik ke `/webhook-test/n8n/earthquake`
-    // dengan body.source_id = insert_id setelah selesai memproses
-    // (lihat api-fix.md > Webhook Callback Routes).
+    // Trigger n8n Webhook secara asinkron (jangan tunggu balasan n8n)
     if (n8nWebhookUrl) {
       axios.post(n8nWebhookUrl, {
         event_type: 'gempa_baru',
-        quake_id: currentQuakeId,
-        insert_id: earthquakeInsertId,
-        callback_url: '/webhook-test/n8n/earthquake',
         gempa_data: gempa
         // Catatan: Jika server bertugas hitung jarak Haversine, kalkulasi dan tambahkan 'jarak_km' ke sini
-      }, { timeout: 10000 }).catch(err => {
+      }).catch(err => {
         if (fastifyLogger) fastifyLogger.error('Gagal mengirim Webhook ke n8n');
       });
     }

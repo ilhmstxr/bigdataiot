@@ -63,32 +63,25 @@ async function receiveMitigationData(request, reply) {
 }
 
 /**
- * POST /webhook-test/n8n/thermal
+ * POST /webhook-test/n8n/thermal/:id
  * Callback dari n8n setelah memproses data thermal (event_type: thermal_anomaly).
- * `source_id` di-body = referensi insert_id dari `thermal_logs` (record sensor asli).
+ * `:id` = referensi insert_id dari `thermal_logs` (record sensor asli yang men-trigger flow).
  * Body fleksibel: hanya `mitigation_advice` dan `confidence_score` yang dipakai langsung;
  * field lain disimpan di `raw_response` untuk audit trail.
  */
 async function receiveThermalCallback(request, reply) {
+  const { id } = request.params;
   const body = request.body || {};
-  const sourceId = body.source_id;
-
-  if (!sourceId) {
-    return reply.code(400).send({
-      status: 'error',
-      message: 'Missing required field: source_id'
-    });
-  }
 
   const payload = {
-    event_id: `THERMAL_${sourceId}`,
+    event_id: `THERMAL_${id}`,
     event_type: 'thermal_anomaly',
     mitigation_advice: body.mitigation_advice || '(no advice provided by n8n)',
     confidence_score: typeof body.confidence_score === 'number' ? body.confidence_score : 1.0,
-    raw_response: { ...body, _source_id: sourceId, _callback: 'thermal' }
+    raw_response: { ...body, _source_id: id, _callback: 'thermal' }
   };
 
-  request.log.info({ source_id: sourceId, advice_len: payload.mitigation_advice.length },
+  request.log.info({ source_id: id, advice_len: payload.mitigation_advice.length },
     '[N8N CALLBACK] Thermal mitigation received');
 
   try {
@@ -96,13 +89,13 @@ async function receiveThermalCallback(request, reply) {
     return reply.code(201).send({
       status: 'success',
       message: 'Thermal callback recorded.',
-      source_id: sourceId,
+      source_id: id,
       event_id: payload.event_id,
       event_type: payload.event_type,
       insert_id: insertId
     });
   } catch (error) {
-    request.log.error({ err: error, source_id: sourceId }, '[N8N CALLBACK] Thermal DB Insert Failed');
+    request.log.error({ err: error, source_id: id }, '[N8N CALLBACK] Thermal DB Insert Failed');
     return reply.code(500).send({
       status: 'error',
       message: 'Database failure.'
@@ -111,30 +104,23 @@ async function receiveThermalCallback(request, reply) {
 }
 
 /**
- * POST /webhook-test/n8n/earthquake
+ * POST /webhook-test/n8n/earthquake/:id
  * Callback dari n8n setelah memproses data gempa (event_type: earthquake).
- * `source_id` di-body = referensi insert_id dari `earthquake_logs` (record gempa asli).
+ * `:id` = referensi insert_id dari `earthquake_logs` (record gempa asli dari poller BMKG).
  */
 async function receiveEarthquakeCallback(request, reply) {
+  const { id } = request.params;
   const body = request.body || {};
-  const sourceId = body.source_id;
-
-  if (!sourceId) {
-    return reply.code(400).send({
-      status: 'error',
-      message: 'Missing required field: source_id'
-    });
-  }
 
   const payload = {
-    event_id: `EARTHQUAKE_${sourceId}`,
+    event_id: `EARTHQUAKE_${id}`,
     event_type: 'earthquake',
     mitigation_advice: body.mitigation_advice || '(no advice provided by n8n)',
     confidence_score: typeof body.confidence_score === 'number' ? body.confidence_score : 1.0,
-    raw_response: { ...body, _source_id: sourceId, _callback: 'earthquake' }
+    raw_response: { ...body, _source_id: id, _callback: 'earthquake' }
   };
 
-  request.log.info({ source_id: sourceId, advice_len: payload.mitigation_advice.length },
+  request.log.info({ source_id: id, advice_len: payload.mitigation_advice.length },
     '[N8N CALLBACK] Earthquake mitigation received');
 
   try {
@@ -142,13 +128,13 @@ async function receiveEarthquakeCallback(request, reply) {
     return reply.code(201).send({
       status: 'success',
       message: 'Earthquake callback recorded.',
-      source_id: sourceId,
+      source_id: id,
       event_id: payload.event_id,
       event_type: payload.event_type,
       insert_id: insertId
     });
   } catch (error) {
-    request.log.error({ err: error, source_id: sourceId }, '[N8N CALLBACK] Earthquake DB Insert Failed');
+    request.log.error({ err: error, source_id: id }, '[N8N CALLBACK] Earthquake DB Insert Failed');
     return reply.code(500).send({
       status: 'error',
       message: 'Database failure.'
