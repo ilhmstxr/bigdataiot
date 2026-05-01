@@ -1,8 +1,59 @@
-// Di dalam file server.js Anda, sebelum "app.listen()"
-const bmkgService = require('./services/bmkgIngestor');
+// Require the fastify framework and instantiate it
+const fastify = require('fastify')({ logger: true });
 
-// Ambil URL Webhook n8n dari environment variable (.env)
-const webhookUrl = process.env.N8N_GEMPA_WEBHOOK_URL; 
+// Require dotenv untuk environment variables
+require('dotenv').config();
 
-// Start polling setiap 60,000 ms (1 menit)
-bmkgService.startPoller(60000, webhookUrl, app.log);
+// Register plugins
+fastify.register(require('@fastify/cors'));
+fastify.register(require('@fastify/env'), {
+  dotenv: true,
+  schema: {
+    type: 'object',
+    required: ['PORT', 'DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'],
+    properties: {
+      PORT: { type: 'string', default: '3000' },
+      DB_HOST: { type: 'string' },
+      DB_USER: { type: 'string' },
+      DB_PASSWORD: { type: 'string' },
+      DB_NAME: { type: 'string' },
+      N8N_GEMPA_WEBHOOK_URL: { type: 'string' }
+    }
+  }
+});
+
+// Register routes
+fastify.register(require('./routes/api-Iot'));
+fastify.register(require('./routes/api-n8n'));
+fastify.register(require('./routes/api-dashboard'));
+
+// Health check endpoint
+fastify.get('/', async (request, reply) => {
+  return { status: 'OK', message: 'BigData Server is running' };
+});
+
+// BMKG Service setup (jika file exists)
+try {
+  const bmkgService = require('./bmkg-service');
+  const webhookUrl = process.env.N8N_GEMPA_WEBHOOK_URL;
+  
+  if (webhookUrl) {
+    bmkgService.startPoller(60000, webhookUrl, fastify.log);
+    fastify.log.info('BMKG service started');
+  }
+} catch (error) {
+  fastify.log.warn('BMKG service not available');
+}
+
+// Start the server
+const start = async () => {
+  try {
+    await fastify.listen({ port: parseInt(process.env.PORT) || 3000, host: '0.0.0.0' });
+    fastify.log.info(`Server listening on ${fastify.server.address().port}`);
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+};
+
+start();
