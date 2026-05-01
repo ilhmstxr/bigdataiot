@@ -1,0 +1,30 @@
+{
+  "name": "bigdata-native-server",
+  "version": "2.0.0",
+  "description": "BigData API Server - Native Node.js HTTPS (No Fastify)",
+  "main": "native-server.js",
+  "scripts": {
+    "start": "node native-server.js",
+    "dev": "node native-server.js",
+    "ssl:generate": "openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ssl/key.pem -out ssl/cert.pem -subj '/CN=localhost'",
+    "test": "echo 'Run manual tests using cURL commands from api-fix.md'"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0",
+    "mysql2": "^3.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "bigdata",
+    "iot",
+    "bmkg",
+    "n8n",
+    "native-nodejs",
+    "https"
+  ],
+  "author": "BigData Team",
+  "license": "MIT"
+}

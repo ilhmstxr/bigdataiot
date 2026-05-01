@@ -1,8 +1,7 @@
 # API Documentation — BigData Server (server4)
 
-Framework: **Native Node.js** (`http`/`https` modules - No Fastify/Express)  
-Protocol: **HTTPS** (Force HTTPS - auto-redirect HTTP to HTTPS)  
-Base URL: `https://localhost:3443` (HTTPS) | `http://localhost:3000` (HTTP → redirect HTTPS)  
+Framework: **Fastify**  
+Base URL: `http://localhost:3000`  
 Database: **MySQL/MariaDB** (`big_data_sitasi`)
 
 ---
@@ -11,12 +10,7 @@ Database: **MySQL/MariaDB** (`big_data_sitasi`)
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `PORT_HTTPS` | No | `3443` | Port HTTPS server |
-| `PORT_HTTP` | No | `3000` | Port HTTP redirect server (redirect ke HTTPS jika FORCE_HTTPS=true) |
-| `FORCE_HTTPS` | No | `true` | Force redirect semua HTTP ke HTTPS (set 'false' untuk disable) |
-| `SSL_KEY_PATH` | No | `./ssl/key.pem` | Path ke SSL private key |
-| `SSL_CERT_PATH` | No | `./ssl/cert.pem` | Path ke SSL certificate |
-| `PORT` | No | `3000` | ⚠️ **Deprecated** (Fastify legacy). Gunakan `PORT_HTTPS` atau `PORT_HTTP` |
+| `PORT` | No | `3000` | Port server berjalan |
 | `DB_HOST` | Yes | — | Host database MySQL |
 | `DB_USER` | Yes | — | Username database |
 | `DB_PASSWORD` | Yes | — | Password database |
@@ -65,7 +59,7 @@ Menyimpan data mitigasi dari n8n/Gemini AI.
 ## Root
 
 ### `GET /`
-Serve frontend static (`public/index.html`) via native `fs.readFile()` dengan MIME type detection manual.
+Serve frontend static (`public/index.html`) via plugin `@fastify/static` dengan `prefix: '/'`.
 
 > Catatan: endpoint ini **bukan** JSON health check. Semua file di bawah `server4/public/` (HTML, CSS, JS, asset) di-serve dari root. Untuk health check JSON, gunakan `GET /api/health`.
 
@@ -780,85 +774,10 @@ Field `callback_url` di payload sudah berisi path lengkap yang siap pakai. n8n t
 - **REVERTED** — `POST /api/bmkg/ingest` **dihapus** (kode + dokumentasi). BMKG memang dirancang one-way: data masuk hanya lewat poller internal `bmkg-service.js`, bukan dari endpoint publik.
 - **ADDED (doc)** — Section **Background Service: BMKG Poller** mendokumentasikan flow fetching `https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json` setiap 60s, dedup via `quake_id`, plus aksi paralel insert DB + outbound webhook.
 - **ADDED (code + doc)** — Outbound webhook **`N8N_THERMAL_WEBHOOK_URL`** di `controllers/iot-controller.ingestThermalData`. Setiap `POST /api/sensor/ingest` sukses akan men-POST payload thermal ke n8n (fire-and-forget). Env var baru ditambahkan ke `.env.example` dan schema `@fastify/env` di `server.js`.
-- **MIGRATED (major)** — **Native Node.js Rewrite**: Seluruh codebase dikonversi dari Fastify ke native Node.js `http`/`https` modules. Force HTTPS dengan auto-redirect HTTP→HTTPS. Static file serving tanpa `@fastify/static` (native `fs` dengan security path traversal protection). JSON body parsing tanpa `@fastify/body-parser` (native stream handling). Routing table tanpa Fastify plugin system (pure object-based router). CORS headers manual. Logger sederhana dengan console.* (bukan Fastify logger pino).
 - **ADDED (code + doc)** — **`POST /webhook-test/n8n/thermal`** dan **`POST /webhook-test/n8n/earthquake`** — callback inbound dari n8n yang melengkapi flow round-trip. n8n wajib kirim `source_id` di body (echo dari `insert_id` yang diterima di outbound webhook). Body fleksibel (`additionalProperties: true`); record disimpan ke `mitigation_logs` dengan `event_id` = `THERMAL_${source_id}` / `EARTHQUAKE_${source_id}`. Handler baru: `mitigationController.receiveThermalCallback` & `receiveEarthquakeCallback`. Helper internal `persistMitigation` di-extract dari `receiveMitigationData` supaya tidak duplikasi.
 - **MODIFIED (code)** — Outbound payload `bmkg-service.js` sekarang include `quake_id`, `insert_id`, `callback_url`. Outbound payload `iot-controller.js` sekarang include `callback_url` (sebelumnya sudah ada `insert_id`). Tujuannya: n8n flow designer dapat hint pasti path callback yang harus dipakai.
 - **DOCUMENTED** — Section **Outbound Webhooks (Server → n8n)** men-spesifikasi 2 trigger, target URL, payload shape, error-handling, dan pola callback round-trip.
 - Endpoint inbound lain (`/api/sensor/ingest`, `/api/n8n/mitigation|webhook|history|health`, `/api/bmkg/latest|history|health`, `/api/dashboard/*`) **tidak berubah** path & method.
-
----
-
-## Native Server Setup & SSL
-
-### Prerequisites
-- Node.js >= 18.0.0
-- MySQL/MariaDB server running
-- SSL certificates (self-signed untuk development)
-
-### 1. Generate SSL Certificate (Development)
-```bash
-mkdir ssl
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout ssl/key.pem \
-  -out ssl/cert.pem \
-  -subj '/CN=localhost' \
-  -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'
-```
-
-### 2. Install Dependencies
-```bash
-npm install
-# atau jika menggunakan package-native.json:
-npm install axios dotenv mysql2
-```
-
-### 3. Environment Configuration
-Copy `.env.example` ke `.env` dan sesuaikan:
-```bash
-PORT_HTTPS=3443
-PORT_HTTP=3000
-FORCE_HTTPS=true
-SSL_KEY_PATH=./ssl/key.pem
-SSL_CERT_PATH=./ssl/cert.pem
-# ... database config
-```
-
-### 4. Run Server
-```bash
-# Production mode
-node native-server.js
-
-# Development mode (same)
-node native-server.js
-```
-
-### 5. Verify
-- HTTPS: `https://localhost:3443/api/health`
-- HTTP Redirect: `http://localhost:3000/api/health` → redirects to HTTPS
-
-### Architecture Overview (Native Node.js)
-```
-native-server.js
-├── HTTPS Server (port 3443) → handleRequest()
-│   ├── Body Parser (native stream)
-│   ├── Router (object-based routing table)
-│   ├── Controllers (native request/reply context)
-│   └── Static File Serving (fs + mime-types)
-├── HTTP Redirect Server (port 3000) → 301 to HTTPS
-└── BMKG Poller (background interval)
-```
-
-### Perbedaan Fastify vs Native
-| Fitur | Fastify (Lama) | Native (Baru) |
-|-------|----------------|---------------|
-| Framework | Fastify | Node.js `http`/`https` |
-| Routing | Plugin system | Object-based router |
-| Body Parsing | `@fastify/body-parser` | Native stream + JSON.parse |
-| Static Files | `@fastify/static` | `fs.readFile()` + mime detection |
-| Validation | JSON Schema | Manual validation |
-| Logger | Pino (Fastify) | console.* wrapper |
-| CORS | `@fastify/cors` | Manual headers |
-| HTTPS | Optional | Force HTTPS default |
 
 ---
 
@@ -869,9 +788,7 @@ native-server.js
 - **Thunder Client** — ekstensi VS Code (ringan, tanpa install terpisah)
 - **Postman** — GUI lengkap, bisa import collection
 
-Base URL untuk semua test: `https://localhost:3443` (HTTPS) atau `http://localhost:3000` (auto-redirect ke HTTPS)
-
-> **⚠️ HTTPS Self-Signed Certificate**: Karena menggunakan SSL certificate self-signed (development), tambahkan flag `--insecure` (cURL) atau disable SSL verification di Postman/Thunder Client.
+Base URL untuk semua test: `http://localhost:3000`
 
 ---
 
@@ -940,47 +857,47 @@ Base URL untuk semua test: `https://localhost:3443` (HTTPS) atau `http://localho
 
 #### Root — Frontend static
 ```bash
-curl -i https://localhost:3443/ --insecure
+curl -i http://localhost:3000/
 ```
 
 #### Root — Health check JSON
 ```bash
-curl https://localhost:3443/api/health --insecure
+curl http://localhost:3000/api/health
 ```
 
 #### IoT — Ingest sensor data
 ```bash
-curl -X POST https://localhost:3443/api/sensor/ingest --insecure -H "Content-Type: application/json" -d "{\"device_id\": \"ESP32_001\", \"window_start\": 1714550400, \"window_end\": 1714554000, \"temperature\": {\"max\": 35.5, \"max_ts\": 1714552000, \"min\": 28.2, \"min_ts\": 1714550600, \"avg\": 31.85}, \"humidity\": {\"max\": 75.0, \"max_ts\": 1714551000, \"min\": 65.0, \"min_ts\": 1714553000, \"avg\": 70.0}}"
+curl -X POST http://localhost:3000/api/sensor/ingest -H "Content-Type: application/json" -d "{\"device_id\": \"ESP32_001\", \"window_start\": 1714550400, \"window_end\": 1714554000, \"temperature\": {\"max\": 35.5, \"max_ts\": 1714552000, \"min\": 28.2, \"min_ts\": 1714550600, \"avg\": 31.85}, \"humidity\": {\"max\": 75.0, \"max_ts\": 1714551000, \"min\": 65.0, \"min_ts\": 1714553000, \"avg\": 70.0}}"
 ```
 
 #### IoT — Validasi gagal (field kurang)
 ```bash
-curl -X POST https://localhost:3443/api/sensor/ingest --insecure -H "Content-Type: application/json" -d "{\"device_id\": \"ESP32_001\"}"
+curl -X POST http://localhost:3000/api/sensor/ingest -H "Content-Type: application/json" -d "{\"device_id\": \"ESP32_001\"}"
 ```
 
 #### n8n — Kirim data mitigasi
 ```bash
-curl -X POST https://localhost:3443/api/n8n/mitigation --insecure -H "Content-Type: application/json" -d "{\"event_id\": \"EVT_001\", \"event_type\": \"thermal_anomaly\", \"mitigation_advice\": \"High temperature detected. Ensure proper ventilation.\", \"confidence_score\": 0.85, \"raw_response\": {\"source\": \"gemini\", \"model\": \"gemini-pro\"}}"
+curl -X POST http://localhost:3000/api/n8n/mitigation -H "Content-Type: application/json" -d "{\"event_id\": \"EVT_001\", \"event_type\": \"thermal_anomaly\", \"mitigation_advice\": \"High temperature detected. Ensure proper ventilation.\", \"confidence_score\": 0.85, \"raw_response\": {\"source\": \"gemini\", \"model\": \"gemini-pro\"}}"
 ```
 
 #### n8n — Webhook
 ```bash
-curl -X POST https://localhost:3443/api/n8n/webhook --insecure -H "Content-Type: application/json" -d "{\"event_id\": \"EVT_002\", \"event_type\": \"earthquake\", \"mitigation_advice\": \"Earthquake detected. Follow evacuation procedures.\", \"confidence_score\": 0.92}"
+curl -X POST http://localhost:3000/api/n8n/webhook -H "Content-Type: application/json" -d "{\"event_id\": \"EVT_002\", \"event_type\": \"earthquake\", \"mitigation_advice\": \"Earthquake detected. Follow evacuation procedures.\", \"confidence_score\": 0.92}"
 ```
 
 #### n8n — Riwayat mitigasi (semua)
 ```bash
-curl https://localhost:3443/api/n8n/history --insecure
+curl "http://localhost:3000/api/n8n/history"
 ```
 
 #### n8n — Riwayat mitigasi (filter + pagination)
 ```bash
-curl https://localhost:3443/api/n8n/history?event_id=EVT_001&limit=10&offset=0 --insecure
+curl "http://localhost:3000/api/n8n/history?event_id=EVT_001&limit=10&offset=0"
 ```
 
 #### n8n — Health check
 ```bash
-curl https://localhost:3443/api/n8n/health --insecure
+  curl http://localhost:3000/api/n8n/health
 ```
 
 #### BMKG — Sumber data poller (langsung ke BMKG, bukan ke server kita)
@@ -990,84 +907,84 @@ curl https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json
 
 #### Webhook Callback — Thermal (simulasi n8n callback)
 ```bash
-curl -X POST https://localhost:3443/webhook-test/n8n/thermal --insecure -H "Content-Type: application/json" -d "{\"source_id\": \"42\", \"mitigation_advice\": \"Aktifkan AC zona A, suhu di atas threshold 33C selama 15 menit\", \"confidence_score\": 0.92, \"raw_response\": {\"model\": \"gemini-2.0-flash\", \"tokens\": 1024}}"
+curl -X POST http://localhost:3000/webhook-test/n8n/thermal -H "Content-Type: application/json" -d "{\"source_id\": \"42\", \"mitigation_advice\": \"Aktifkan AC zona A, suhu di atas threshold 33C selama 15 menit\", \"confidence_score\": 0.92, \"raw_response\": {\"model\": \"gemini-2.0-flash\", \"tokens\": 1024}}"
 ```
 
 #### Webhook Callback — Thermal tanpa source_id (validasi gagal)
 ```bash
-curl -X POST https://localhost:3443/webhook-test/n8n/thermal --insecure -H "Content-Type: application/json" -d "{\"mitigation_advice\": \"test\"}"
+curl -X POST http://localhost:3000/webhook-test/n8n/thermal -H "Content-Type: application/json" -d "{\"mitigation_advice\": \"test\"}"
 ```
 
 #### Webhook Callback — Thermal body kosong selain source_id (defaults dipakai)
 ```bash
-curl -X POST https://localhost:3443/webhook-test/n8n/thermal --insecure -H "Content-Type: application/json" -d "{\"source_id\": \"42\"}"
+curl -X POST http://localhost:3000/webhook-test/n8n/thermal -H "Content-Type: application/json" -d "{\"source_id\": \"42\"}"
 ```
 
 #### Webhook Callback — Earthquake (simulasi n8n callback)
 ```bash
-curl -X POST https://localhost:3443/webhook-test/n8n/earthquake --insecure -H "Content-Type: application/json" -d "{\"source_id\": \"17\", \"mitigation_advice\": \"Magnitudo 5.1 jarak 320km dari datacenter, low impact, no action needed\", \"confidence_score\": 0.88, \"metadata\": {\"workflow_id\": \"earthquake-mitigation-v2\"}}"
+curl -X POST http://localhost:3000/webhook-test/n8n/earthquake -H "Content-Type: application/json" -d "{\"source_id\": \"17\", \"mitigation_advice\": \"Magnitudo 5.1 jarak 320km dari datacenter, low impact, no action needed\", \"confidence_score\": 0.88, \"metadata\": {\"workflow_id\": \"earthquake-mitigation-v2\"}}"
 ```
 
 #### Webhook Callback — Validasi gagal (confidence_score > 1)
 ```bash
-curl -X POST https://localhost:3443/webhook-test/n8n/thermal --insecure -H "Content-Type: application/json" -d "{\"source_id\": \"42\", \"confidence_score\": 1.5}"
+curl -X POST http://localhost:3000/webhook-test/n8n/thermal -H "Content-Type: application/json" -d "{\"source_id\": \"42\", \"confidence_score\": 1.5}"
 ```
 
 #### BMKG — Gempa terbaru
 ```bash
-curl https://localhost:3443/api/bmkg/latest --insecure
+curl http://localhost:3000/api/bmkg/latest
 ```
 
 #### BMKG — Riwayat gempa
 ```bash
-curl "https://localhost:3443/api/bmkg/history" --insecure
-curl "https://localhost:3443/api/bmkg/history?min_magnitude=5.0&limit=10" --insecure
+curl "http://localhost:3000/api/bmkg/history"
+curl "http://localhost:3000/api/bmkg/history?min_magnitude=5.0&limit=10"
 ```
 
 #### BMKG — Health check
 ```bash
-curl https://localhost:3443/api/bmkg/health --insecure
+curl http://localhost:3000/api/bmkg/health
 ```
 
 #### Dashboard — Overview
 ```bash
-curl "https://localhost:3443/api/dashboard/overview" --insecure
-curl "https://localhost:3443/api/dashboard/overview?period=7d" --insecure
-curl "https://localhost:3443/api/dashboard/overview?period=30d&device_id=ESP32_001" --insecure
+curl "http://localhost:3000/api/dashboard/overview"
+curl "http://localhost:3000/api/dashboard/overview?period=7d"
+curl "http://localhost:3000/api/dashboard/overview?period=30d&device_id=ESP32_001"
 ```
 
 #### Dashboard — Trends
 ```bash
-curl "https://localhost:3443/api/dashboard/trends" --insecure
-curl "https://localhost:3443/api/dashboard/trends?period=7d&device_id=ESP32_001" --insecure
+curl "http://localhost:3000/api/dashboard/trends?period=24h"
+curl "http://localhost:3000/api/dashboard/trends?period=7d&device_id=ESP32_001"
 ```
 
 #### Dashboard — Alerts
 ```bash
-curl "https://localhost:3443/api/dashboard/alerts" --insecure
-curl "https://localhost:3443/api/dashboard/alerts?severity=high&limit=10" --insecure
-curl "https://localhost:3443/api/dashboard/alerts?severity=medium&offset=5" --insecure
+curl "http://localhost:3000/api/dashboard/alerts"
+curl "http://localhost:3000/api/dashboard/alerts?severity=high&limit=10"
+curl "http://localhost:3000/api/dashboard/alerts?severity=medium&offset=5"
 ```
 
 #### Dashboard — Realtime
 ```bash
-curl "https://localhost:3443/api/dashboard/realtime" --insecure
-curl "https://localhost:3443/api/dashboard/realtime?device_id=ESP32_001" --insecure
+curl "http://localhost:3000/api/dashboard/realtime"
+curl "http://localhost:3000/api/dashboard/realtime?device_id=ESP32_001"
 ```
 
 #### Dashboard — Devices
 ```bash
-curl https://localhost:3443/api/dashboard/devices --insecure
+curl http://localhost:3000/api/dashboard/devices
 ```
 
 #### Dashboard — Stats
 ```bash
-curl https://localhost:3443/api/dashboard/stats --insecure
+curl http://localhost:3000/api/dashboard/stats
 ```
 
 #### Dashboard — Health check
 ```bash
-curl https://localhost:3443/api/dashboard/health --insecure
+curl http://localhost:3000/api/dashboard/health
 ```
 
 ---

@@ -1,10 +1,6 @@
-/**
- * Database Configuration - Native Node.js Version
- * MySQL connection pool using mysql2/promise
- */
-
 const mysql = require('mysql2/promise');
 
+// Database connection pool configuration
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT) || 3306,
@@ -13,19 +9,17 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || 'bigdata',
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 10000
+  queueLimit: 0
 });
 
-// Test connection on startup
+// Test connection
 pool.getConnection()
-  .then(conn => {
-    console.log('[DB] Database connected successfully');
-    conn.release();
+  .then(connection => {
+    console.log('Database connected successfully');
+    connection.release();
   })
-  .catch(err => {
-    console.error('[DB] Database connection failed:', err.message);
+  .catch(error => {
+    console.error('Database connection failed:', error.message);
   });
 
 module.exports = pool;
