@@ -56,7 +56,18 @@ Menyimpan data mitigasi dari n8n/Gemini AI.
 ## Root
 
 ### `GET /`
-Health check server.
+Serve frontend static (`public/index.html`) via plugin `@fastify/static` dengan `prefix: '/'`.
+
+> Catatan: endpoint ini **bukan** JSON health check. Semua file di bawah `server4/public/` (HTML, CSS, JS, asset) di-serve dari root. Untuk health check JSON, gunakan `GET /api/health`.
+
+**Response `200`** — `Content-Type: text/html` (isi `public/index.html`)
+
+**Response `404`** — bila `public/index.html` tidak ada / path asset tidak ditemukan.
+
+---
+
+### `GET /api/health`
+Health check server (JSON).
 
 **Response `200`**
 ```json
@@ -485,28 +496,53 @@ Health check untuk dashboard service.
 
 ## Ringkasan Semua Endpoint
 
-| Method | Path | Keterangan |
-|---|---|---|
-| `GET` | `/` | Health check server |
-| `POST` | `/api/sensor/ingest` | Ingest data sensor ESP32 |
+Daftar di bawah sinkron dengan kode aktual (`server4/server.js` + `server4/routes/*.js`).
 
-<!-- N8N -->
-| `POST` | `/api/n8n/mitigation` | Simpan data mitigasi dari AI |
-| `POST` | `/api/n8n/webhook` | Webhook alias untuk n8n |
-| `GET` | `/api/n8n/history` | Riwayat mitigasi |
-| `GET` | `/api/n8n/health` | Health check n8n service |
-| `GET` | `/api/bmkg/latest` | Data raw gempa terbaru |
-| `GET` | `/api/bmkg/history` | Riwayat raw gempa dari DB |
-| `GET` | `/api/bmkg/health` | Health check BMKG service |
+<!-- Root & Health -->
+| Method | Path | Handler / Plugin | Keterangan |
+|---|---|---|---|
+| `GET` | `/` | `@fastify/static` | Frontend static (`public/index.html`) |
+| `GET` | `/api/health` | `server.js` (inline) | Health check server (JSON) |
+
+<!-- IoT -->
+| Method | Path | Handler / Plugin | Keterangan |
+|---|---|---|---|
+| `POST` | `/api/sensor/ingest` | `controllers/iot-controller.ingestThermalData` | Ingest data sensor ESP32 (window aggregate) |
+
+<!-- n8n / AI -->
+| Method | Path | Handler / Plugin | Keterangan |
+|---|---|---|---|
+| `POST` | `/api/n8n/mitigation` | `controllers/mitigationLog.receiveMitigationData` | Simpan data mitigasi dari n8n / Gemini |
+| `POST` | `/api/n8n/webhook` | `routes/api-n8n.js` (inline) | Webhook alias untuk n8n (log + forward ke handler yang sama dengan `/api/n8n/mitigation`) |
+
+| `POST` | `/webhook-test/n8n/thermal/:id` |  => DARI N8N KE SERVER (RESPON HASIL PROSES DATA THERMAL)
+| `POST` | `/webhook-test/n8n/earthquake/:id` | => DARI N8N KE SERVER (RESPON HASIL PROSES DATA GEMPI)
+
+| `GET`  | `/api/n8n/history` | `controllers/mitigationLog.getMitigationHistory` | Riwayat mitigasi (query: `event_id`, `limit`, `offset`) |
+| `GET`  | `/api/n8n/health` | `routes/api-n8n.js` (inline) | Health check service n8n |
+
+<!-- BMKG -->
+| Method | Path | Handler / Plugin | Keterangan |
+|---|---|---|---|
+| `GET` | `/api/bmkg/latest` | `controllers/earthquakeLog.getLatestEarthquake` | Data gempa terbaru dari DB |
+| `GET` | `/api/bmkg/history` | `controllers/earthquakeLog.getEarthquakeHistory` | Riwayat gempa (query: `limit`, `offset`, `min_magnitude`) |
+| `GET` | `/api/bmkg/health` | `routes/api-bmkg.js` (inline) | Health check service BMKG |
 
 <!-- Dashboard -->
-| `GET` | `/api/dashboard/overview` | Ringkasan dashboard utama |
-| `GET` | `/api/dashboard/trends` | Tren suhu & kelembaban |
-| `GET` | `/api/dashboard/alerts` | Riwayat alert & mitigasi |
-| `GET` | `/api/dashboard/realtime` | Data sensor realtime |
-| `GET` | `/api/dashboard/devices` | Daftar device aktif |
-| `GET` | `/api/dashboard/stats` | Statistik ringkas widget |
-| `GET` | `/api/dashboard/health` | Health check dashboard service |
+| Method | Path | Handler / Plugin | Keterangan |
+|---|---|---|---|
+| `GET` | `/api/dashboard/overview` | `controllers/dashboard.getDashboardOverview` | Ringkasan utama (query: `period`, `device_id`, `limit`, `offset`, `severity`) |
+| `GET` | `/api/dashboard/trends` | `controllers/dashboard.getThermalTrends` | Tren suhu & kelembaban (query: `period`, `device_id`) |
+| `GET` | `/api/dashboard/alerts` | `controllers/dashboard.getAlertHistory` | Riwayat alert & mitigasi (query sama dengan overview) |
+| `GET` | `/api/dashboard/realtime` | `controllers/dashboard.getRealtimeData` | Data sensor realtime (query: `device_id`) |
+| `GET` | `/api/dashboard/devices` | `routes/api-dashboard.js` (inline) | Daftar device aktif 7 hari terakhir |
+| `GET` | `/api/dashboard/stats` | `routes/api-dashboard.js` (inline) | Statistik ringkas widget (24 jam terakhir) |
+| `GET` | `/api/dashboard/health` | `routes/api-dashboard.js` (inline) | Health check service dashboard |
+
+### Changelog dari versi tabel sebelumnya
+- **MODIFIED** — `GET /` **bukan lagi** JSON health check; sekarang meng-serve frontend static (`public/index.html`) via `@fastify/static`.
+- **ADDED** — `GET /api/health` ditambahkan sebagai health check JSON pengganti untuk `GET /`.
+- Endpoint lain (`/api/sensor/*`, `/api/n8n/*`, `/api/bmkg/*`, `/api/dashboard/*`) **tidak berubah** path, method, dan jumlahnya — hanya kolom handler ditambahkan untuk traceability.
 
 ---
 
@@ -524,8 +560,10 @@ Base URL untuk semua test: `http://localhost:3000`
 ### Checklist Test
 
 #### Root & Health Checks
-- [ ] `GET /` → status `OK`
+- [ ] `GET /` → response `200` dengan `Content-Type: text/html` (isi `public/index.html`)
+- [ ] `GET /api/health` → status `OK`, message `BigData Server is running`
 - [ ] `GET /api/n8n/health` → service `n8n-webhook`
+- [ ] `GET /api/bmkg/health` → service `bmkg-api`
 - [ ] `GET /api/dashboard/health` → service `dashboard-api`
 
 #### IoT Sensor
@@ -563,9 +601,14 @@ Base URL untuk semua test: `http://localhost:3000`
 
 ### cURL Test Commands
 
-#### Root
+#### Root — Frontend static
 ```bash
-curl http://localhost:3000/
+curl -i http://localhost:3000/
+```
+
+#### Root — Health check JSON
+```bash
+curl http://localhost:3000/api/health
 ```
 
 #### IoT — Ingest sensor data
