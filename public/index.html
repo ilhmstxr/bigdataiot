@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BigData — System Monitor</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- ============ Header: System Status ============ -->
+    <header id="sys-header" class="sys-header">
+      <div class="sys-status">
+        <span id="status-dot" class="dot pulse-dot"></span>
+        <span id="status-label" class="status-label">■ SYSTEM STATUS: INITIALIZING</span>
+      </div>
+      <span id="sys-time" class="sys-time">SYS_TIME: --:--:-- UTC</span>
+    </header>
+
+    <!-- ============ Error bar (hidden by default) ============ -->
+    <div id="error-bar" class="error-bar hidden">
+      ⚠ <span id="error-msg">API_UNREACHABLE</span> — Retrying every 60s. Pastikan server jalan.
+    </div>
+
+    <!-- ============ Top row: Climate + Threat Radar ============ -->
+    <section class="row row-top">
+      <!-- Climate Telemetry -->
+      <div class="panel">
+        <span class="panel-label">MOD-CL-01</span>
+        <p class="panel-title">Internal Climate Telemetry</p>
+        <div class="metrics">
+          <div class="metric">
+            <p class="metric-label">AVG TEMP</p>
+            <p class="metric-value">
+              <span id="m-avg-temp">--</span><span class="unit">°C</span>
+            </p>
+          </div>
+          <div class="metric">
+            <p class="metric-label">Peak Temp</p>
+            <p class="metric-value">
+              <span id="m-peak-temp">--</span><span class="unit">°C</span>
+            </p>
+          </div>
+          <div class="metric">
+            <p class="metric-label">Humidity</p>
+            <p class="metric-value">
+              <span id="m-humidity">--</span><span class="unit">%</span>
+            </p>
+          </div>
+        </div>
+        <div class="footer-line">
+          <span class="dot pulse-dot dot-cyan"></span>
+          <span class="footer-text">Updated <span id="last-update">…</span></span>
+        </div>
+      </div>
+
+      <!-- Threat Radar -->
+      <div class="panel">
+        <span class="panel-label">MOD-TR-80</span>
+        <p class="panel-title">External Threat Radar</p>
+        <div class="metrics">
+          <div class="metric">
+            <p class="metric-label">Seismic Mag</p>
+            <p class="metric-value">
+              <span id="m-mag">--</span><span class="unit">Mw</span>
+            </p>
+          </div>
+          <div class="metric">
+            <p class="metric-label">Distance</p>
+            <p class="metric-value">
+              <span id="m-depth">--</span><span class="unit">km</span>
+            </p>
+          </div>
+          <div class="metric">
+            <p class="metric-label">AI Status</p>
+            <span class="status-badge">MONITORING</span>
+          </div>
+        </div>
+        <div class="footer-line">
+          <div class="scan-track">
+            <div class="scan-bar"></div>
+          </div>
+          <span class="footer-text">Scan Active</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Bottom row: Chart + Mitigation Table ============ -->
+    <section class="row row-bottom">
+      <!-- Thermal Chart -->
+      <div class="panel">
+        <span class="panel-label">MOD-CH-02</span>
+        <p class="panel-title">Thermal Trend (1H)</p>
+        <div class="chart-wrap">
+          <svg id="thermal-chart" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+
+      <!-- Mitigation Audit Trail -->
+      <div class="panel">
+        <span class="panel-label">MOD-LG-05</span>
+        <p class="panel-title">Mitigation Audit Trail</p>
+        <table class="mit-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Event Type</th>
+              <th>AI Decision</th>
+            </tr>
+          </thead>
+          <tbody id="mit-tbody">
+            <tr><td colspan="3" class="empty">NO_DATA</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ Footer: Devices ============ -->
+    <footer id="device-bar" class="device-bar">
+      <span class="device-label">Devices</span>
+      <span id="device-list" class="device-list">—</span>
+    </footer>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

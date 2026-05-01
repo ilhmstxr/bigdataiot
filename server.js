@@ -1,11 +1,18 @@
 // Require the fastify framework and instantiate it
 const fastify = require('fastify')({ logger: true });
+const path = require('path');
 
 // Require dotenv untuk environment variables
 require('dotenv').config();
 
 // Register plugins
 fastify.register(require('@fastify/cors'));
+
+// Serve frontend static files dari folder public/
+fastify.register(require('@fastify/static'), {
+  root: path.join(__dirname, 'public'),
+  prefix: '/',
+});
 fastify.register(require('@fastify/env'), {
   dotenv: true,
   schema: {
@@ -28,8 +35,8 @@ fastify.register(require('./routes/api-n8n'));
 fastify.register(require('./routes/api-dashboard'));
 fastify.register(require('./routes/api-bmkg'));
 
-// Health check endpoint
-fastify.get('/', async (request, reply) => {
+// Health check endpoint (di-pindah ke /api/health karena `/` sekarang dipakai untuk index.html)
+fastify.get('/api/health', async (request, reply) => {
   return { status: 'OK', message: 'BigData Server is running' };
 });
 
