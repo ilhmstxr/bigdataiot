@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { saveEarthquakeData } = require('./controllers/earthquakeLog');
 
 // RAM State: Menyimpan memori gempa terakhir (Deduplication)
 let lastQuakeId = null;
@@ -24,6 +25,14 @@ async function checkBMKG(fastifyLogger, n8nWebhookUrl) {
     // --- GEMPA BARU TERDETEKSI ---
     lastQuakeId = currentQuakeId;
     if (fastifyLogger) fastifyLogger.info(`[SEISMIC] Gempa baru terdeteksi: ${currentQuakeId} Mag: ${gempa.Magnitude}`);
+
+    // Simpan raw data gempa ke database
+    try {
+      await saveEarthquakeData(gempa);
+      if (fastifyLogger) fastifyLogger.info(`[SEISMIC] Raw data gempa disimpan ke DB: ${currentQuakeId}`);
+    } catch (dbErr) {
+      if (fastifyLogger) fastifyLogger.error(`[SEISMIC] Gagal simpan ke DB: ${dbErr.message}`);
+    }
 
     // Trigger n8n Webhook secara asinkron (jangan tunggu balasan n8n)
     if (n8nWebhookUrl) {

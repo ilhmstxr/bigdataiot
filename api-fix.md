@@ -1,0 +1,756 @@
+# API Documentation — BigData Server (server4)
+
+Framework: **Fastify**  
+Base URL: `http://localhost:3000`  
+Database: **MySQL/MariaDB** (`big_data_sitasi`)
+
+---
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `PORT` | No | `3000` | Port server berjalan |
+| `DB_HOST` | Yes | — | Host database MySQL |
+| `DB_USER` | Yes | — | Username database |
+| `DB_PASSWORD` | Yes | — | Password database |
+| `DB_NAME` | Yes | — | Nama database |
+| `N8N_GEMPA_WEBHOOK_URL` | No | — | URL webhook n8n untuk BMKG poller |
+
+---
+
+## Database Schema
+
+### Tabel `thermal_logs`
+Menyimpan data sensor IoT dari ESP32.
+
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| `id` | INT AUTO_INCREMENT | Primary key |
+| `device_id` | VARCHAR(50) | ID unik perangkat IoT |
+| `window_start` | INT | Unix timestamp awal jendela pengukuran |
+| `window_end` | INT | Unix timestamp akhir jendela pengukuran |
+| `temp_max` | DECIMAL(5,2) | Suhu maksimum (°C) |
+| `temp_min` | DECIMAL(5,2) | Suhu minimum (°C) |
+| `temp_avg` | DECIMAL(5,2) | Suhu rata-rata (°C) |
+| `hum_max` | DECIMAL(5,2) | Kelembaban maksimum (%) |
+| `hum_min` | DECIMAL(5,2) | Kelembaban minimum (%) |
+| `hum_avg` | DECIMAL(5,2) | Kelembaban rata-rata (%) |
+| `created_at` | TIMESTAMP | Waktu record dibuat (auto) |
+
+### Tabel `mitigation_logs`
+Menyimpan data mitigasi dari n8n/Gemini AI.
+
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| `id` | INT AUTO_INCREMENT | Primary key |
+| `event_id` | VARCHAR(50) | Referensi ke event pemicu |
+| `event_type` | VARCHAR(50) | Jenis event (`earthquake`, `thermal_anomaly`, `flood`, `other`) |
+| `mitigation_advice` | TEXT | Saran mitigasi dari AI |
+| `confidence_score` | DECIMAL(3,2) | Skor kepercayaan AI (0.00–1.00) |
+| `raw_response` | JSON | Raw response lengkap dari AI |
+| `processed_at` | TIMESTAMP | Waktu mitigasi diproses (auto) |
+
+---
+
+## Root
+
+### `GET /`
+Health check server.
+
+**Response `200`**
+```json
+{
+  "status": "OK",
+  "message": "BigData Server is running"
+}
+```
+
+---
+
+## IoT Routes — `/api/sensor`
+
+### `POST /api/sensor/ingest`
+Menerima data sensor aggregated dari perangkat ESP32.
+
+**Request Body** (`application/json`)
+```json
+{
+  "device_id": "ESP32_001",
+  "window_start": 1714550400,
+  "window_end": 1714554000,
+  "temperature": {
+    "max": 35.5,
+    "max_ts": 1714552000,
+    "min": 28.2,
+    "min_ts": 1714550600,
+    "avg": 31.85
+  },
+  "humidity": {
+    "max": 75.0,
+    "max_ts": 1714551000,
+    "min": 65.0,
+    "min_ts": 1714553000,
+    "avg": 70.0
+  }
+}
+```
+
+**Field yang wajib:** `device_id`, `window_start`, `window_end`, `temperature`, `humidity`  
+Semua sub-field di dalam `temperature` dan `humidity` (`max`, `max_ts`, `min`, `min_ts`, `avg`) juga **wajib**.
+
+**Response `201`**
+```json
+{
+  "status": "success",
+  "message": "Edge data recorded.",
+  "insert_id": 42
+}
+```
+
+**Response `400`** — Validasi gagal (field kurang / tipe salah)
+
+**Response `500`**
+```json
+{ "status": "error", "message": "Database failure." }
+```
+
+---
+
+## n8n / AI Routes — `/api/n8n`
+
+### `POST /api/n8n/mitigation`
+Menerima data mitigasi dari n8n/Gemini AI.
+
+**Request Body** (`application/json`)
+```json
+{
+  "event_id": "EVT_001",
+  "event_type": "thermal_anomaly",
+  "mitigation_advice": "High temperature detected. Ensure proper ventilation.",
+  "confidence_score": 0.85,
+  "raw_response": { "source": "gemini", "model": "gemini-pro" },
+  "metadata": {}
+}
+```
+
+**Field yang wajib:** `event_id`, `event_type`, `mitigation_advice`, `confidence_score`  
+Nilai `event_type` harus salah satu dari: `earthquake` | `thermal_anomaly` | `flood` | `other`  
+Nilai `confidence_score` harus antara `0` dan `1`.
+
+**Response `201`**
+```json
+{
+  "status": "success",
+  "message": "Mitigation data recorded.",
+  "insert_id": 7
+}
+```
+
+**Response `400`** — Field wajib tidak ada  
+**Response `500`** — Kegagalan database
+
+---
+
+### `POST /api/n8n/webhook`
+Alias webhook untuk n8n automation. Menggunakan schema dan handler yang sama dengan `POST /api/n8n/mitigation`. Setiap request masuk di-log sebelum diproses.
+
+**Request Body** — Sama dengan `/api/n8n/mitigation`
+
+**Response** — Sama dengan `/api/n8n/mitigation`
+
+---
+
+### `GET /api/n8n/history`
+Mengambil riwayat data mitigasi dari database.
+
+**Query Parameters**
+
+| Parameter | Tipe | Default | Keterangan |
+|---|---|---|---|
+| `event_id` | string | — | Filter berdasarkan event ID (opsional) |
+| `limit` | string | `50` | Jumlah record yang dikembalikan |
+| `offset` | string | `0` | Offset untuk pagination |
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": [
+    {
+      "id": 1,
+      "event_id": "EVT_001",
+      "event_type": "thermal_anomaly",
+      "mitigation_advice": "...",
+      "confidence_score": 0.85,
+      "raw_response": {},
+      "processed_at": "2024-01-01T12:00:00.000Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+**Response `500`** — Kegagalan database
+
+---
+
+### `GET /api/n8n/health`
+Health check untuk n8n service.
+
+**Response `200`**
+```json
+{
+  "status": "OK",
+  "service": "n8n-webhook",
+  "timestamp": "2024-01-01T12:00:00.000Z"
+}
+```
+
+---
+
+## BMKG Routes — `/api/bmkg`
+
+### `GET /api/bmkg/latest`
+Mengembalikan data raw gempa terbaru yang tersimpan di database.
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": {
+    "id": 1,
+    "quake_id": "01 Mei 2026_16:24:24 WIB",
+    "tanggal": "01 Mei 2026",
+    "jam": "16:24:24 WIB",
+    "datetime_utc": "2026-05-01T09:24:24.000Z",
+    "coordinates": "-1.31,134.40",
+    "lintang": "1.31 LS",
+    "bujur": "134.40 BT",
+    "magnitude": 5.1,
+    "kedalaman": "12 km",
+    "wilayah": "Pusat gempa berada di laut 33 km Timur Laut Ransiki",
+    "potensi": "Gempa ini dirasakan untuk diteruskan pada masyarakat",
+    "dirasakan": "III Ransiki, II-III Manokwari",
+    "shakemap": "20260501162424.mmi.jpg",
+    "raw_data": { "...": "..." },
+    "created_at": "2026-05-01T09:24:30.000Z"
+  }
+}
+```
+
+**Response `404`** — Belum ada data gempa di database
+
+---
+
+### `GET /api/bmkg/history`
+Mengembalikan riwayat gempa dari database.
+
+**Query Parameters**
+
+| Parameter | Tipe | Default | Keterangan |
+|---|---|---|---|
+| `limit` | string | `20` | Jumlah record |
+| `offset` | string | `0` | Offset pagination |
+| `min_magnitude` | string | — | Filter magnitudo minimum (opsional) |
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": [ { "...": "..." } ],
+  "total": 10
+}
+```
+
+---
+
+### `GET /api/bmkg/health`
+Health check untuk BMKG service.
+
+**Response `200`**
+```json
+{
+  "status": "OK",
+  "service": "bmkg-api",
+  "timestamp": "2026-05-01T09:24:30.000Z"
+}
+```
+
+---
+
+## Dashboard Routes — `/api/dashboard`
+
+### `GET /api/dashboard/overview`
+Mengembalikan ringkasan data utama untuk tampilan React UI.
+
+**Query Parameters**
+
+| Parameter | Tipe | Default | Pilihan |
+|---|---|---|---|
+| `period` | string | `24h` | `24h`, `7d`, `30d` |
+| `device_id` | string | — | Filter device (opsional) |
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": {
+    "thermal_summary": {
+      "total_records": 120,
+      "avg_temperature": 31.5,
+      "avg_humidity": 68.2,
+      "max_temperature": 38.0,
+      "min_temperature": 25.1,
+      "latest_reading": "2024-01-01T12:00:00.000Z"
+    },
+    "mitigation_summary": {
+      "total_mitigations": 5,
+      "avg_confidence": 0.82,
+      "recent_mitigations": 2
+    },
+    "device_status": [
+      {
+        "device_id": "ESP32_001",
+        "last_seen": "2024-01-01T12:00:00.000Z",
+        "readings_count": 60
+      }
+    ],
+    "timestamp": "2024-01-01T12:00:00.000Z"
+  }
+}
+```
+
+---
+
+### `GET /api/dashboard/trends`
+Mengembalikan tren suhu dan kelembaban dalam periode tertentu.
+
+**Query Parameters**
+
+| Parameter | Tipe | Default | Pilihan |
+|---|---|---|---|
+| `period` | string | `24h` | `24h`, `7d`, `30d` |
+| `device_id` | string | — | Filter device (opsional) |
+
+Granularitas: `24h` → per jam, `7d` / `30d` → per hari.
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": [
+    {
+      "time_period": "2024-01-01 11:00:00",
+      "avg_temperature": 31.2,
+      "avg_humidity": 67.5,
+      "max_temperature": 35.5,
+      "min_temperature": 28.0,
+      "readings_count": 6
+    }
+  ],
+  "period": "24h",
+  "device_id": "all"
+}
+```
+
+---
+
+### `GET /api/dashboard/alerts`
+Mengembalikan riwayat alert dan mitigasi.
+
+**Query Parameters**
+
+| Parameter | Tipe | Default | Pilihan |
+|---|---|---|---|
+| `limit` | string | `20` | — |
+| `offset` | string | `0` | — |
+| `severity` | string | — | `high` (≥0.8), `medium` (≥0.5), `low` (<0.5) |
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": [
+    {
+      "id": 1,
+      "event_id": "EVT_001",
+      "event_type": "thermal_anomaly",
+      "mitigation_advice": "...",
+      "confidence_score": 0.85,
+      "processed_at": "2024-01-01T12:00:00.000Z",
+      "device_id": "ESP32_001",
+      "temp_max": 38.0,
+      "temp_avg": 33.5
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+### `GET /api/dashboard/realtime`
+Mengembalikan data sensor terbaru dalam 1 jam terakhir (maks. 100 record).
+
+**Query Parameters**
+
+| Parameter | Tipe | Keterangan |
+|---|---|---|
+| `device_id` | string | Filter device (opsional) |
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": [
+    {
+      "device_id": "ESP32_001",
+      "temp_max": 35.5,
+      "temp_min": 28.2,
+      "temp_avg": 31.85,
+      "hum_max": 75.0,
+      "hum_min": 65.0,
+      "hum_avg": 70.0,
+      "window_start": 1714550400,
+      "window_end": 1714554000,
+      "created_at": "2024-01-01T12:00:00.000Z"
+    }
+  ],
+  "device_id": "all"
+}
+```
+
+---
+
+### `GET /api/dashboard/devices`
+Mengembalikan daftar semua device aktif dalam 7 hari terakhir.
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": [
+    {
+      "device_id": "ESP32_001",
+      "last_seen": "2024-01-01T12:00:00.000Z",
+      "total_readings": 500
+    }
+  ]
+}
+```
+
+---
+
+### `GET /api/dashboard/stats`
+Mengembalikan statistik ringkas untuk widget dashboard (24 jam terakhir).
+
+**Response `200`**
+```json
+{
+  "status": "success",
+  "data": {
+    "thermal": {
+      "total_readings": 240,
+      "avg_temp": 31.5,
+      "max_temp": 38.0,
+      "min_temp": 25.1,
+      "high_temp_count": 12
+    },
+    "mitigation": {
+      "total_mitigations": 10,
+      "avg_confidence": 0.80,
+      "recent_mitigations": 3
+    },
+    "timestamp": "2024-01-01T12:00:00.000Z"
+  }
+}
+```
+
+---
+
+### `GET /api/dashboard/health`
+Health check untuk dashboard service.
+
+**Response `200`**
+```json
+{
+  "status": "OK",
+  "service": "dashboard-api",
+  "timestamp": "2024-01-01T12:00:00.000Z"
+}
+```
+
+---
+
+## Ringkasan Semua Endpoint
+
+| Method | Path | Keterangan |
+|---|---|---|
+| `GET` | `/` | Health check server |
+| `POST` | `/api/sensor/ingest` | Ingest data sensor ESP32 |
+
+<!-- N8N -->
+| `POST` | `/api/n8n/mitigation` | Simpan data mitigasi dari AI |
+| `POST` | `/api/n8n/webhook` | Webhook alias untuk n8n |
+| `GET` | `/api/n8n/history` | Riwayat mitigasi |
+| `GET` | `/api/n8n/health` | Health check n8n service |
+| `GET` | `/api/bmkg/latest` | Data raw gempa terbaru |
+| `GET` | `/api/bmkg/history` | Riwayat raw gempa dari DB |
+| `GET` | `/api/bmkg/health` | Health check BMKG service |
+
+<!-- Dashboard -->
+| `GET` | `/api/dashboard/overview` | Ringkasan dashboard utama |
+| `GET` | `/api/dashboard/trends` | Tren suhu & kelembaban |
+| `GET` | `/api/dashboard/alerts` | Riwayat alert & mitigasi |
+| `GET` | `/api/dashboard/realtime` | Data sensor realtime |
+| `GET` | `/api/dashboard/devices` | Daftar device aktif |
+| `GET` | `/api/dashboard/stats` | Statistik ringkas widget |
+| `GET` | `/api/dashboard/health` | Health check dashboard service |
+
+---
+
+## API Testing
+
+### Tools yang Direkomendasikan
+- **cURL** — command line, tersedia di semua OS
+- **Thunder Client** — ekstensi VS Code (ringan, tanpa install terpisah)
+- **Postman** — GUI lengkap, bisa import collection
+
+Base URL untuk semua test: `http://localhost:3000`
+
+---
+
+### Checklist Test
+
+#### Root & Health Checks
+- [ ] `GET /` → status `OK`
+- [ ] `GET /api/n8n/health` → service `n8n-webhook`
+- [ ] `GET /api/dashboard/health` → service `dashboard-api`
+
+#### IoT Sensor
+- [ ] `POST /api/sensor/ingest` → response `201` dengan `insert_id`
+- [ ] `POST /api/sensor/ingest` tanpa field wajib → response `400`
+
+#### BMKG Earthquake
+- [ ] `GET /api/bmkg/latest` → response `200` dengan data gempa
+- [ ] `GET /api/bmkg/history` → response `200` dengan array data
+- [ ] `GET /api/bmkg/history?min_magnitude=5.0` → filter magnitude berhasil
+- [ ] `GET /api/bmkg/health` → service `bmkg-api`
+
+#### n8n / AI Mitigation
+- [ ] `POST /api/n8n/mitigation` → response `201` dengan `insert_id`
+- [ ] `POST /api/n8n/webhook` → response `201` dengan `insert_id`
+- [ ] `POST /api/n8n/mitigation` dengan `event_type` tidak valid → response `400`
+- [ ] `POST /api/n8n/mitigation` dengan `confidence_score` > 1 → response `400`
+- [ ] `GET /api/n8n/history` → response `200` dengan array `data`
+- [ ] `GET /api/n8n/history?event_id=EVT_001` → filter berhasil
+- [ ] `GET /api/n8n/history?limit=5&offset=0` → pagination berhasil
+
+#### Dashboard
+- [ ] `GET /api/dashboard/overview` → response `200`
+- [ ] `GET /api/dashboard/overview?period=7d` → response `200`
+- [ ] `GET /api/dashboard/trends?period=24h` → response `200` dengan array `data`
+- [ ] `GET /api/dashboard/trends?period=7d&device_id=ESP32_001` → filter device berhasil
+- [ ] `GET /api/dashboard/alerts` → response `200`
+- [ ] `GET /api/dashboard/alerts?severity=high` → filter severity berhasil
+- [ ] `GET /api/dashboard/realtime` → response `200`
+- [ ] `GET /api/dashboard/realtime?device_id=ESP32_001` → filter device berhasil
+- [ ] `GET /api/dashboard/devices` → response `200` dengan array device
+- [ ] `GET /api/dashboard/stats` → response `200` dengan `thermal` dan `mitigation`
+
+---
+
+### cURL Test Commands
+
+#### Root
+```bash
+curl http://localhost:3000/
+```
+
+#### IoT — Ingest sensor data
+```bash
+curl -X POST http://localhost:3000/api/sensor/ingest -H "Content-Type: application/json" -d "{\"device_id\": \"ESP32_001\", \"window_start\": 1714550400, \"window_end\": 1714554000, \"temperature\": {\"max\": 35.5, \"max_ts\": 1714552000, \"min\": 28.2, \"min_ts\": 1714550600, \"avg\": 31.85}, \"humidity\": {\"max\": 75.0, \"max_ts\": 1714551000, \"min\": 65.0, \"min_ts\": 1714553000, \"avg\": 70.0}}"
+```
+
+#### IoT — Validasi gagal (field kurang)
+```bash
+curl -X POST http://localhost:3000/api/sensor/ingest -H "Content-Type: application/json" -d "{\"device_id\": \"ESP32_001\"}"
+```
+
+#### n8n — Kirim data mitigasi
+```bash
+curl -X POST http://localhost:3000/api/n8n/mitigation -H "Content-Type: application/json" -d "{\"event_id\": \"EVT_001\", \"event_type\": \"thermal_anomaly\", \"mitigation_advice\": \"High temperature detected. Ensure proper ventilation.\", \"confidence_score\": 0.85, \"raw_response\": {\"source\": \"gemini\", \"model\": \"gemini-pro\"}}"
+```
+
+#### n8n — Webhook
+```bash
+curl -X POST http://localhost:3000/api/n8n/webhook -H "Content-Type: application/json" -d "{\"event_id\": \"EVT_002\", \"event_type\": \"earthquake\", \"mitigation_advice\": \"Earthquake detected. Follow evacuation procedures.\", \"confidence_score\": 0.92}"
+```
+
+#### n8n — Riwayat mitigasi (semua)
+```bash
+curl "http://localhost:3000/api/n8n/history"
+```
+
+#### n8n — Riwayat mitigasi (filter + pagination)
+```bash
+curl "http://localhost:3000/api/n8n/history?event_id=EVT_001&limit=10&offset=0"
+```
+
+#### n8n — Health check
+```bash
+  curl http://localhost:3000/api/n8n/health
+```
+
+#### BMKG — Gempa terbaru
+```bash
+curl http://localhost:3000/api/bmkg/latest
+```
+
+#### BMKG — Riwayat gempa
+```bash
+curl "http://localhost:3000/api/bmkg/history"
+curl "http://localhost:3000/api/bmkg/history?min_magnitude=5.0&limit=10"
+```
+
+#### BMKG — Health check
+```bash
+curl http://localhost:3000/api/bmkg/health
+```
+
+#### Dashboard — Overview
+```bash
+curl "http://localhost:3000/api/dashboard/overview"
+curl "http://localhost:3000/api/dashboard/overview?period=7d"
+curl "http://localhost:3000/api/dashboard/overview?period=30d&device_id=ESP32_001"
+```
+
+#### Dashboard — Trends
+```bash
+curl "http://localhost:3000/api/dashboard/trends?period=24h"
+curl "http://localhost:3000/api/dashboard/trends?period=7d&device_id=ESP32_001"
+```
+
+#### Dashboard — Alerts
+```bash
+curl "http://localhost:3000/api/dashboard/alerts"
+curl "http://localhost:3000/api/dashboard/alerts?severity=high&limit=10"
+curl "http://localhost:3000/api/dashboard/alerts?severity=medium&offset=5"
+```
+
+#### Dashboard — Realtime
+```bash
+curl "http://localhost:3000/api/dashboard/realtime"
+curl "http://localhost:3000/api/dashboard/realtime?device_id=ESP32_001"
+```
+
+#### Dashboard — Devices
+```bash
+curl http://localhost:3000/api/dashboard/devices
+```
+
+#### Dashboard — Stats
+```bash
+curl http://localhost:3000/api/dashboard/stats
+```
+
+#### Dashboard — Health check
+```bash
+curl http://localhost:3000/api/dashboard/health
+```
+
+---
+
+### Thunder Client / Postman — Import JSON
+
+Simpan sebagai file `.json` lalu import ke Thunder Client atau Postman:
+
+```json
+{
+  "client": "thunder-client",
+  "collectionName": "BigData Server API",
+  "requests": [
+    {
+      "name": "Root Health Check",
+      "method": "GET",
+      "url": "http://localhost:3000/"
+    },
+    {
+      "name": "IoT - Ingest Sensor Data",
+      "method": "POST",
+      "url": "http://localhost:3000/api/sensor/ingest",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "type": "json",
+        "raw": "{\"device_id\":\"ESP32_001\",\"window_start\":1714550400,\"window_end\":1714554000,\"temperature\":{\"max\":35.5,\"max_ts\":1714552000,\"min\":28.2,\"min_ts\":1714550600,\"avg\":31.85},\"humidity\":{\"max\":75.0,\"max_ts\":1714551000,\"min\":65.0,\"min_ts\":1714553000,\"avg\":70.0}}"
+      }
+    },
+    {
+      "name": "n8n - Send Mitigation Data",
+      "method": "POST",
+      "url": "http://localhost:3000/api/n8n/mitigation",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "type": "json",
+        "raw": "{\"event_id\":\"EVT_001\",\"event_type\":\"thermal_anomaly\",\"mitigation_advice\":\"High temperature detected.\",\"confidence_score\":0.85}"
+      }
+    },
+    {
+      "name": "n8n - Webhook",
+      "method": "POST",
+      "url": "http://localhost:3000/api/n8n/webhook",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "type": "json",
+        "raw": "{\"event_id\":\"EVT_002\",\"event_type\":\"earthquake\",\"mitigation_advice\":\"Earthquake detected.\",\"confidence_score\":0.92}"
+      }
+    },
+    {
+      "name": "n8n - Mitigation History",
+      "method": "GET",
+      "url": "http://localhost:3000/api/n8n/history?limit=10&offset=0"
+    },
+    {
+      "name": "n8n - Health Check",
+      "method": "GET",
+      "url": "http://localhost:3000/api/n8n/health"
+    },
+    {
+      "name": "Dashboard - Overview",
+      "method": "GET",
+      "url": "http://localhost:3000/api/dashboard/overview?period=24h"
+    },
+    {
+      "name": "Dashboard - Trends",
+      "method": "GET",
+      "url": "http://localhost:3000/api/dashboard/trends?period=24h"
+    },
+    {
+      "name": "Dashboard - Alerts (High)",
+      "method": "GET",
+      "url": "http://localhost:3000/api/dashboard/alerts?severity=high&limit=20"
+    },
+    {
+      "name": "Dashboard - Realtime",
+      "method": "GET",
+      "url": "http://localhost:3000/api/dashboard/realtime"
+    },
+    {
+      "name": "Dashboard - Devices",
+      "method": "GET",
+      "url": "http://localhost:3000/api/dashboard/devices"
+    },
+    {
+      "name": "Dashboard - Stats",
+      "method": "GET",
+      "url": "http://localhost:3000/api/dashboard/stats"
+    },
+    {
+      "name": "Dashboard - Health Check",
+      "method": "GET",
+      "url": "http://localhost:3000/api/dashboard/health"
+    }
+  ]
+}
+```

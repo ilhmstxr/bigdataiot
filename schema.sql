@@ -34,6 +34,32 @@ CREATE TABLE thermal_logs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 
 COMMENT='Thermal sensor data from IoT devices';
 
+-- Table for raw earthquake data from BMKG
+CREATE TABLE earthquake_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  quake_id VARCHAR(100) NOT NULL COMMENT 'Unique ID: Tanggal_Jam',
+  tanggal VARCHAR(50) NOT NULL COMMENT 'Tanggal kejadian gempa',
+  jam VARCHAR(50) NOT NULL COMMENT 'Jam kejadian gempa WIB',
+  datetime_utc DATETIME NOT NULL COMMENT 'Waktu UTC dari field DateTime BMKG',
+  coordinates VARCHAR(50) COMMENT 'Koordinat latitude,longitude',
+  lintang VARCHAR(50) COMMENT 'Lintang dalam format BMKG',
+  bujur VARCHAR(50) COMMENT 'Bujur dalam format BMKG',
+  magnitude DECIMAL(4,1) NOT NULL COMMENT 'Magnitudo gempa',
+  kedalaman VARCHAR(50) COMMENT 'Kedalaman gempa',
+  wilayah TEXT COMMENT 'Deskripsi wilayah pusat gempa',
+  potensi TEXT COMMENT 'Potensi dampak gempa',
+  dirasakan TEXT COMMENT 'Daerah yang merasakan gempa',
+  shakemap VARCHAR(100) COMMENT 'Nama file shakemap',
+  raw_data JSON COMMENT 'Raw response lengkap dari BMKG',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'Waktu record dibuat',
+
+  UNIQUE INDEX idx_quake_id (quake_id),
+  INDEX idx_datetime_utc (datetime_utc),
+  INDEX idx_magnitude (magnitude),
+  INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+COMMENT='Raw earthquake data from BMKG autogempa API';
+
 -- Table for mitigation data from n8n/Gemini AI
 CREATE TABLE mitigation_logs (
   id INT AUTO_INCREMENT PRIMARY KEY,

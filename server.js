@@ -26,6 +26,7 @@ fastify.register(require('@fastify/env'), {
 fastify.register(require('./routes/api-Iot'));
 fastify.register(require('./routes/api-n8n'));
 fastify.register(require('./routes/api-dashboard'));
+fastify.register(require('./routes/api-bmkg'));
 
 // Health check endpoint
 fastify.get('/', async (request, reply) => {
