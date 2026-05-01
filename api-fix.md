@@ -174,6 +174,8 @@ Alias webhook untuk n8n automation. Menggunakan schema dan handler yang sama den
 **Response** — Sama dengan `/api/n8n/mitigation`
 
 ---
+### `POST /webhook-test/n8n/earthquake`
+
 
 ### `POST /webhook-test/n8n/thermal`
 Callback dari n8n setelah memproses data **thermal**. Path-prefix `/webhook-test/n8n/*` sengaja terpisah dari `/api/n8n/*` supaya jelas: ini endpoint **dipanggil oleh n8n** (server jadi *receiver*), bukan endpoint untuk client.

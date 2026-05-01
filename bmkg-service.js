@@ -46,7 +46,7 @@ async function checkBMKG(fastifyLogger, n8nWebhookUrl) {
         event_type: 'gempa_baru',
         quake_id: currentQuakeId,
         insert_id: earthquakeInsertId,
-        callback_url: '/webhook-test/n8n/earthquake',
+        callback_url: '/api/webhook/n8n/earthquake',
         gempa_data: gempa
         // Catatan: Jika server bertugas hitung jarak Haversine, kalkulasi dan tambahkan 'jarak_km' ke sini
       }, { timeout: 10000 }).catch(err => {

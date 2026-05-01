@@ -43,7 +43,7 @@ async function dashboardRoutes(fastify, options) {
   }, dashboardController.getDashboardOverview);
 
   // Thermal Trends - Temperature and humidity trends over time
-  fastify.get('/api/dashboard/trends', { 
+  fastify.get('/api/dashboard/thermal-trend', { 
     schema: trendsQuerySchema 
   }, dashboardController.getThermalTrends);
 

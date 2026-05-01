@@ -72,14 +72,14 @@ async function n8nRoutes(fastify, options) {
   // Callback dari n8n: hasil proses data thermal.
   // Trigger upstream: POST /api/sensor/ingest -> outbound webhook ke N8N_THERMAL_WEBHOOK_URL
   // -> n8n proses (AI / rule) -> POST balik ke sini dengan body.source_id = thermal_logs.insert_id.
-  fastify.post('/webhook-test/n8n/thermal', {
+  fastify.post('/api/webhook/n8n/thermal', {
     schema: callbackSchema
   }, mitigationController.receiveThermalCallback);
 
   // Callback dari n8n: hasil proses data gempa.
   // Trigger upstream: bmkg-service.checkBMKG (poller 60s) -> outbound webhook ke N8N_GEMPA_WEBHOOK_URL
   // -> n8n proses -> POST balik ke sini dengan body.source_id = earthquake_logs.insert_id.
-  fastify.post('/webhook-test/n8n/earthquake', {
+  fastify.post('/api/webhook/n8n/earthquake', {
     schema: callbackSchema
   }, mitigationController.receiveEarthquakeCallback);
 

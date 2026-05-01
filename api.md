@@ -5,16 +5,25 @@ Gateway pada `server.js`. Sumber pemetaan URL: `routes/api.js`. Default base
 URL pengembangan adalah `http://localhost:3000` (di produksi, Nginx mem-proxy
 dari `:3003` lihat `sites-available.md`).
 
-| # | Method | Path                          | Handler / Controller                          | Tujuan |
-|---|--------|-------------------------------|-----------------------------------------------|--------|
-| 1 | POST   | `/api/sensor/ingest`          | `controllers/sensorLog.js → ingestThermalData`| Menerima ringkasan thermal/humidity dari ESP32 |
-| 2 | GET    | `/api/sensor/latest`          | `controllers/sensorLog.js → fetchLatestMetrics`| Mengembalikan metrik thermal terbaru (untuk n8n) |
-| 3 | POST   | `/api/mitigasi/log`           | `controllers/mitigationLog.js → logAiMitigation`| Audit trail keputusan AI (Gemini via n8n) |
-| 4 | GET    | `/api/dashboard/overview`     | `controllers/dashboard.js → buildOverviewHandler`| Ringkasan untuk header & 2 panel atas dashboard |
-| 5 | GET    | `/api/dashboard/thermal-trend`| `controllers/dashboard.js → thermalTrend`     | Data line chart suhu/kelembapan N menit terakhir |
-| 6 | GET    | `/api/dashboard/audit`        | `controllers/dashboard.js → auditTrail`       | N keputusan mitigasi terakhir (audit table) |
-| 7 | OPTIONS| `/*` (wildcard)               | inline di `server.js`                         | CORS preflight, balas `204 No Content` |
-| 8 | GET    | `/health`                     | inline di `routes/api.js`                     | Liveness probe |
+harusnya api nya 
+api/sensor/ingest
+fetching data dari https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json
+api/webhook/n8n/earthquake
+api/webhook/n8n/thermal
+api/dashboard/thermal-trend => get per menit dan dimasukkan dashboard
+
+
+| # | Method | Path                               | Handler / Controller                                     | Tujuan |
+|---|--------|------------------------------------|----------------------------------------------------------|--------|
+| 1 | POST   | `/api/sensor/ingest`               | `controllers/iot-controller.js → ingestThermalData`      | Menerima ringkasan thermal/humidity dari ESP32 |
+| 2 | POST   | `/api/webhook/n8n/earthquake`      | `controllers/mitigationLog.js → receiveEarthquakeCallback`| Callback dari n8n setelah memproses data gempa BMKG |
+| 3 | POST   | `/api/webhook/n8n/thermal`         | `controllers/mitigationLog.js → receiveThermalCallback`  | Callback dari n8n setelah memproses anomali thermal |
+| 4 | GET    | `/api/dashboard/thermal-trend`     | `controllers/dashboard.js → getThermalTrends`            | Data line chart suhu/kelembapan untuk dashboard |
+| 5 | GET    | `/api/dashboard/overview`          | `controllers/dashboard.js → getDashboardOverview`        | Ringkasan untuk header & panel atas dashboard |
+| 6 | GET    | `/api/dashboard/alerts`            | `controllers/dashboard.js → getAlertHistory`             | N keputusan mitigasi terakhir (audit table) |
+| 7 | GET    | `/api/health`                      | inline di `server.js`                                    | Liveness probe server Fastify |
+
+> **Catatan Background Service**: Untuk fetching data gempa dari `https://data.bmkg.go.id/DataMKG/TEWS/autogempa.json`, proses ini berjalan otomatis di background (menggunakan interval 60 detik) melalui file `bmkg-service.js`. Data gempa baru akan disimpan dan di-forward ke n8n tanpa perlu endpoint HTTP masuk (inbound) khusus untuk BMKG.
 
 > Semua endpoint dibungkus CORS via hook `onSend` di `server.js`
 > (`Access-Control-Allow-Origin` = `process.env.CORS_ALLOW_ORIGIN` atau `*`).

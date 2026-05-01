@@ -260,7 +260,7 @@ upstream bigdata_app {
 server {
     listen 80;
     listen [::]:80;
-    server_name bigdata.example.com www.bigdata.example.com;
+    server_name server3bigdata.isslab.web.id www.server3bigdata.isslab.web.id;
 
     # Force redirect ke HTTPS
     return 301 https://$host$request_uri;
@@ -270,7 +270,7 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name bigdata.example.com www.bigdata.example.com;
+    server_name server3bigdata.isslab.web.id www.server3bigdata.isslab.web.id;
 
     # SSL certificates (otomatis di-set certbot)
     ssl_certificate     /etc/letsencrypt/live/bigdata.example.com/fullchain.pem;

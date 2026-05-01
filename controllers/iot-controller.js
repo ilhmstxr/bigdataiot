@@ -44,7 +44,7 @@ async function ingestThermalData(request, reply) {
         temperature: payload.temperature,
         humidity: payload.humidity,
         insert_id: result.insertId,
-        callback_url: '/webhook-test/n8n/thermal',
+        callback_url: '/api/webhook/n8n/thermal',
         recorded_at: new Date().toISOString()
       }, { timeout: 10000 }).catch(err => {
         request.log.error({ err: err.message }, '[THERMAL] Gagal mengirim webhook ke n8n');

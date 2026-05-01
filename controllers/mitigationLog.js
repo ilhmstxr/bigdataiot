@@ -4,7 +4,7 @@ const db = require('../config/database');
 /**
  * Helper internal: insert satu record ke `mitigation_logs`.
  * Dipakai oleh `receiveMitigationData` (POST /api/n8n/mitigation, /api/n8n/webhook)
- * dan callback handler (POST /webhook-test/n8n/thermal|earthquake/:id).
+ * dan callback handler (POST /api/webhook/n8n/thermal|earthquake/:id).
  *
  * @param {{
  *   event_id: string,
@@ -63,7 +63,7 @@ async function receiveMitigationData(request, reply) {
 }
 
 /**
- * POST /webhook-test/n8n/thermal
+ * POST /api/webhook/n8n/thermal
  * Callback dari n8n setelah memproses data thermal (event_type: thermal_anomaly).
  * `source_id` di-body = referensi insert_id dari `thermal_logs` (record sensor asli).
  * Body fleksibel: hanya `mitigation_advice` dan `confidence_score` yang dipakai langsung;
@@ -111,7 +111,7 @@ async function receiveThermalCallback(request, reply) {
 }
 
 /**
- * POST /webhook-test/n8n/earthquake
+ * POST /api/webhook/n8n/earthquake
  * Callback dari n8n setelah memproses data gempa (event_type: earthquake).
  * `source_id` di-body = referensi insert_id dari `earthquake_logs` (record gempa asli).
  */
