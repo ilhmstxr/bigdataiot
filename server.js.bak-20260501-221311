@@ -26,8 +26,7 @@ fastify.register(require('@fastify/env'), {
       DB_USER: { type: 'string' },
       DB_PASSWORD: { type: 'string' },
       DB_NAME: { type: 'string' },
-      N8N_GEMPA_WEBHOOK_URL: { type: 'string' },
-      N8N_THERMAL_WEBHOOK_URL: { type: 'string' }
+      N8N_GEMPA_WEBHOOK_URL: { type: 'string' }
     }
   }
 });
