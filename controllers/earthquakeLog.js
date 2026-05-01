@@ -1,92 +1,124 @@
+/**
+ * Earthquake Log Controller - Native Node.js Version
+ * Handles BMKG earthquake data retrieval
+ */
+
 const db = require('../config/database');
 
-async function saveEarthquakeData(gempaData) {
-  const quakeId = `${gempaData.Tanggal}_${gempaData.Jam}`;
-
+/**
+ * Helper: save earthquake data (for BMKG service)
+ */
+async function saveEarthquakeData(gempa) {
+  // Generate quake_id dari Tanggal dan Jam
+  const quakeId = `${gempa.Tanggal}_${gempa.Jam}`;
+  
   const query = `
     INSERT IGNORE INTO earthquake_logs
-    (quake_id, tanggal, jam, datetime_utc, coordinates, lintang, bujur,
-     magnitude, kedalaman, wilayah, potensi, dirasakan, shakemap, raw_data)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (quake_id, tanggal, jam, datetime, coordinates, lintang, bujur, magnitude, kedalaman, wilayah, potensi, dirasakan)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
-
+  
   const values = [
     quakeId,
-    gempaData.Tanggal,
-    gempaData.Jam,
-    new Date(gempaData.DateTime),
-    gempaData.Coordinates,
-    gempaData.Lintang,
-    gempaData.Bujur,
-    parseFloat(gempaData.Magnitude),
-    gempaData.Kedalaman,
-    gempaData.Wilayah,
-    gempaData.Potensi,
-    gempaData.Dirasakan,
-    gempaData.Shakemap,
-    JSON.stringify(gempaData)
+    gempa.Tanggal,
+    gempa.Jam,
+    gempa.DateTime,
+    gempa.Coordinates,
+    gempa.Lintang,
+    gempa.Bujur,
+    gempa.Magnitude,
+    gempa.Kedalaman,
+    gempa.Wilayah,
+    gempa.Potensi || null,
+    gempa.Dirasakan || null
   ];
 
   const [result] = await db.query(query, values);
   return result;
 }
 
-async function getEarthquakeHistory(request, reply) {
-  const { limit = 20, offset = 0, min_magnitude } = request.query;
-
+/**
+ * GET /api/bmkg/latest
+ * Mengambil data gempa terbaru dari database
+ */
+async function getLatestEarthquake(request, reply) {
   try {
-    let query = `SELECT * FROM earthquake_logs WHERE 1=1`;
-    const params = [];
-
-    if (min_magnitude) {
-      query += ' AND magnitude >= ?';
-      params.push(parseFloat(min_magnitude));
+    const [rows] = await db.query(
+      'SELECT * FROM earthquake_logs ORDER BY datetime DESC LIMIT 1'
+    );
+    
+    if (rows.length === 0) {
+      return reply.code(404).send({
+        status: 'error',
+        message: 'No earthquake data found'
+      });
     }
-
-    query += ' ORDER BY datetime_utc DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), parseInt(offset));
-
-    const [results] = await db.query(query, params);
-
-    return reply.code(200).send({
+    
+    return reply.send({
       status: 'success',
-      data: results,
-      total: results.length
+      data: rows[0]
     });
   } catch (error) {
-    request.log.error({ err: error }, 'Earthquake History Query Failed');
+    console.error('[BMKG] Get Latest Error', { err: error.message });
     return reply.code(500).send({
       status: 'error',
-      message: 'Database failure.'
+      message: 'Database query failed.'
     });
   }
 }
 
-async function getLatestEarthquake(request, reply) {
+/**
+ * GET /api/bmkg/history
+ * Mengambil riwayat gempa dengan pagination dan filter
+ */
+async function getEarthquakeHistory(request, reply) {
+  const { limit = '20', offset = '0', min_magnitude } = request.query;
+  
+  const limitNum = parseInt(limit) || 20;
+  const offsetNum = parseInt(offset) || 0;
+
   try {
-    const [results] = await db.query(
-      `SELECT * FROM earthquake_logs ORDER BY datetime_utc DESC LIMIT 1`
-    );
-
-    if (results.length === 0) {
-      return reply.code(404).send({ status: 'error', message: 'No earthquake data found.' });
+    let query = 'SELECT * FROM earthquake_logs WHERE 1=1';
+    const values = [];
+    
+    if (min_magnitude) {
+      query += ' AND magnitude >= ?';
+      values.push(parseFloat(min_magnitude));
     }
+    
+    query += ' ORDER BY datetime DESC LIMIT ? OFFSET ?';
+    values.push(limitNum, offsetNum);
 
-    return reply.code(200).send({
+    const [rows] = await db.query(query, values);
+    
+    // Get total count
+    let countQuery = 'SELECT COUNT(*) as total FROM earthquake_logs WHERE 1=1';
+    const countValues = [];
+    if (min_magnitude) {
+      countQuery += ' AND magnitude >= ?';
+      countValues.push(parseFloat(min_magnitude));
+    }
+    const [countResult] = await db.query(countQuery, countValues);
+    
+    return reply.send({
       status: 'success',
-      data: results[0]
+      count: rows.length,
+      total: countResult[0].total,
+      offset: offsetNum,
+      limit: limitNum,
+      data: rows
     });
   } catch (error) {
-    request.log.error({ err: error }, 'Latest Earthquake Query Failed');
+    console.error('[BMKG] Get History Error', { err: error.message });
     return reply.code(500).send({
       status: 'error',
-      message: 'Database failure.'
+      message: 'Database query failed.'
     });
   }
 }
 
 module.exports = {
   saveEarthquakeData,
-  getEarthquakeHistory,
-  getLatestEarthquake
+  getLatestEarthquake,
+  getEarthquakeHistory
 };

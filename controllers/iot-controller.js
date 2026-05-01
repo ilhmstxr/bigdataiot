@@ -1,39 +1,66 @@
-// Asumsi pool koneksi database diekspor dari config/database.js
-const db = require('../config/database');
-const axios = require('axios');
+/**
+ * IoT Controller - Native Node.js Version
+ * Handles thermal sensor data ingestion
+ */
 
-async function ingestThermalData(request, reply) {
+const axios = require('axios');
+const db = require('../config/database');
+
+/**
+ * POST /api/sensor/ingest
+ * Menerima data agregat window dari ESP32 dan menyimpan ke thermal_logs
+ */
+async function ingestThermalData(request, reply, log) {
   const payload = request.body;
 
-  // Prepared Statement: Cegah SQL Injection & parsing efisien
+  // Validasi manual (schema replacement)
+  const requiredFields = ['device_id', 'window_start', 'window_end', 'temperature', 'humidity'];
+  for (const field of requiredFields) {
+    if (payload[field] === undefined || payload[field] === null) {
+      return reply.code(400).send({
+        status: 'error',
+        message: `Missing required field: ${field}`
+      });
+    }
+  }
+
+  // Validasi nested temperature/humidity
+  const requiredStats = ['max', 'max_ts', 'min', 'min_ts', 'avg'];
+  for (const stat of requiredStats) {
+    if (payload.temperature[stat] === undefined || payload.humidity[stat] === undefined) {
+      return reply.code(400).send({
+        status: 'error',
+        message: `Missing required stat field: ${stat} in temperature/humidity`
+      });
+    }
+  }
+
   const query = `
     INSERT INTO thermal_logs 
-    (device_id, window_start, window_end, temp_max, temp_min, temp_avg, hum_max, hum_min, hum_avg)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (device_id, window_start, window_end, temp_max, temp_max_ts, temp_min, temp_min_ts, temp_avg, humidity_max, humidity_max_ts, humidity_min, humidity_min_ts, humidity_avg)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   
-  // Membongkar (flatten) struktur JSON dari ESP32
   const values = [
     payload.device_id,
     payload.window_start,
     payload.window_end,
     payload.temperature.max,
+    payload.temperature.max_ts,
     payload.temperature.min,
+    payload.temperature.min_ts,
     payload.temperature.avg,
     payload.humidity.max,
+    payload.humidity.max_ts,
     payload.humidity.min,
+    payload.humidity.min_ts,
     payload.humidity.avg
   ];
 
   try {
     const [result] = await db.query(query, values);
 
-    // Outbound webhook ke n8n (fire-and-forget, tidak menahan response).
-    // URL diambil dari env N8N_THERMAL_WEBHOOK_URL.
-    // Pola error-handling mengikuti bmkg-service.js: log saja, jangan rollback DB.
-    // n8n diharapkan POST balik ke `/webhook-test/n8n/thermal`
-    // dengan body.source_id = insert_id setelah selesai memproses
-    // (lihat api-fix.md > Webhook Callback Routes).
+    // Outbound webhook ke n8n (fire-and-forget)
     const thermalWebhookUrl = process.env.N8N_THERMAL_WEBHOOK_URL;
     if (thermalWebhookUrl) {
       axios.post(thermalWebhookUrl, {
@@ -47,7 +74,7 @@ async function ingestThermalData(request, reply) {
         callback_url: '/webhook-test/n8n/thermal',
         recorded_at: new Date().toISOString()
       }, { timeout: 10000 }).catch(err => {
-        request.log.error({ err: err.message }, '[THERMAL] Gagal mengirim webhook ke n8n');
+        if (log) log.error({ err: err.message }, '[THERMAL] Gagal mengirim webhook ke n8n');
       });
     }
 
@@ -55,13 +82,16 @@ async function ingestThermalData(request, reply) {
     return reply.code(201).send({
       status: 'success',
       message: 'Edge data recorded.',
-      insert_id: result.insertId
+      insert_id: result.insertId,
+      device_id: payload.device_id,
+      window_start: payload.window_start
     });
+
   } catch (error) {
-    request.log.error({ err: error }, 'DB Insert Failed');
-    return reply.code(500).send({ 
-      status: 'error', 
-      message: 'Database failure.' 
+    if (log) log.error({ err: error.message }, '[DB] Gagal menyimpan thermal data');
+    return reply.code(500).send({
+      status: 'error',
+      message: 'Database operation failed.'
     });
   }
 }

@@ -1,33 +1,30 @@
 {
-  "name": "bigdata-server4",
-  "version": "1.0.0",
-  "description": "Big Data Server with Fastify API",
-  "main": "server.js",
+  "name": "bigdata-native-server",
+  "version": "2.0.0",
+  "description": "BigData API Server - Native Node.js HTTPS (No Fastify)",
+  "main": "native-server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
-    "migrate": "mysql -u root -p big_data_sitasi < schema.sql",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node native-server.js",
+    "dev": "node native-server.js",
+    "ssl:generate": "openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ssl/key.pem -out ssl/cert.pem -subj '/CN=localhost'",
+    "test": "echo 'Run manual tests using cURL commands from api-fix.md'"
   },
   "dependencies": {
-    "@fastify/cors": "^8.4.0",
-    "@fastify/env": "^4.2.0",
-    "@fastify/mysql": "^4.1.0",
-    "@fastify/static": "^7.0.4",
-    "axios": "^1.15.2",
-    "dotenv": "^16.3.1",
-    "fastify": "^4.24.3",
-    "mysql2": "^3.6.5"
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0",
+    "mysql2": "^3.6.0"
   },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
+  "engines": {
+    "node": ">=18.0.0"
   },
   "keywords": [
-    "fastify",
-    "api",
     "bigdata",
-    "iot"
+    "iot",
+    "bmkg",
+    "n8n",
+    "native-nodejs",
+    "https"
   ],
-  "author": "",
-  "license": "ISC"
+  "author": "BigData Team",
+  "license": "MIT"
 }
